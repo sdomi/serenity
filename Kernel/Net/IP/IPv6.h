@@ -11,6 +11,7 @@
 #include <AK/Endian.h>
 #include <AK/IPv6Address.h>
 #include <AK/Types.h>
+#include <Kernel/Net/IP/IP.h>
 
 namespace Kernel {
 
@@ -28,7 +29,8 @@ enum class IPv6NextHeader : u8 {
 class [[gnu::packed]] IPv6PacketHeader {
 public:
     u8 version() const { return (m_version >> 4) & 0xf; }
-    void set_version(u8 version) { m_version = (m_version & 0x0f) | (version << 4); }
+    void set_version(u8 version) { m_version = version; }
+    //void set_version(u8 version) { (void)version; m_version_and_traffic = 6 << 28; }
 
     u16 length() const { return m_length; }
     void set_length(u16 length) { m_length = length; }
@@ -52,16 +54,17 @@ public:
     void* payload() { return this + 1; }
     void const* payload() const { return this + 1; }
 
-    u16 payload_size() const { return m_length - sizeof(IPv6PacketHeader); }
+    u16 payload_size() const { return m_length; }
 
 private:
     union {
         struct [[gnu::packed]] {
-            u8 m_version : 4;
-            u8 m_traffic_class : 8;
+            u32 m_traffic_class_1 : 4;
+            u32 m_version : 4;
+            u32 m_traffic_class_2 : 4;
             u32 m_flow_label : 20;
         };
-        u32 m_version_and_traffic;
+        NetworkOrdered<u32> m_version_and_traffic;
     };
     NetworkOrdered<u16> m_length;
     u8 m_next_header { static_cast<u8>(IPv6NextHeader::NoNextHeader) };
@@ -71,5 +74,17 @@ private:
 };
 
 static_assert(AssertSize<IPv6PacketHeader, 10 * 32 / 8>());
+
+// https://www.rfc-editor.org/rfc/rfc2460
+// section 8.1, checksumming
+struct [[gnu::packed]] IPv6PseudoHeader {
+    IPv6Address source_address;
+    IPv6Address target_address;
+    NetworkOrdered<u32> packet_length;
+    u8 zero { 0 };
+    u8 zero_ { 0 };
+    u8 zero__ { 0 };
+    TransportProtocol next_header;
+};
 
 }
