@@ -30,9 +30,9 @@ namespace Kernel {
 
 static void handle_arp(EthernetFrameHeader const&, size_t frame_size);
 static void handle_ipv4(EthernetFrameHeader const&, size_t frame_size, UnixDateTime const& packet_timestamp);
-static void handle_ipv6(EthernetFrameHeader const&, size_t frame_size, UnixDateTime const& packet_timestamp);
+static void handle_ipv6(EthernetFrameHeader const&, size_t frame_size, UnixDateTime const& packet_timestamp, RefPtr<NetworkAdapter> adapter);
 static void handle_icmp(EthernetFrameHeader const&, IPv4Packet const&, UnixDateTime const& packet_timestamp);
-static void handle_icmpv6(EthernetFrameHeader const&, IPv6PacketHeader const&, UnixDateTime const& packet_timestamp);
+static void handle_icmpv6(EthernetFrameHeader const&, IPv6PacketHeader const&, UnixDateTime const& packet_timestamp, RefPtr<NetworkAdapter> adapter);
 static void handle_udp(IPv4Packet const&, UnixDateTime const& packet_timestamp);
 static void handle_tcp(IPv4Packet const&, UnixDateTime const& packet_timestamp);
 static void send_delayed_tcp_ack(TCPSocket& socket);
@@ -120,10 +120,11 @@ void NetworkTask_main(void*)
             handle_arp(eth, packet_size);
             break;
         case EtherType::IPv4:
-            handle_ipv4(eth, packet_size, packet_timestamp);
+            // TODO: refactor to take adapter, like IPv6
+            handle_ipv4(eth, packet_size, meta.packet_timestamp);
             break;
         case EtherType::IPv6:
-            handle_ipv6(eth, packet_size, packet_timestamp);
+            handle_ipv6(eth, packet_size, meta.packet_timestamp, meta.adapter);
             break;
         default:
             dbgln_if(ETHERNET_DEBUG, "NetworkTask: Unknown ethernet type {:#04x}", eth.ether_type());
@@ -226,7 +227,7 @@ void handle_ipv4(EthernetFrameHeader const& eth, size_t frame_size, UnixDateTime
     }
 }
 
-void handle_ipv6(EthernetFrameHeader const& eth, size_t frame_size, UnixDateTime const& packet_timestamp)
+void handle_ipv6(EthernetFrameHeader const& eth, size_t frame_size, UnixDateTime const& packet_timestamp, RefPtr<NetworkAdapter> adapter)
 {
     (void)packet_timestamp;
 
@@ -263,54 +264,154 @@ void handle_ipv6(EthernetFrameHeader const& eth, size_t frame_size, UnixDateTime
         dbgln_if(IPV6_DEBUG, "handle_ipv6: TODO: got TCP packet, what to do with it?");
         break;
     case TransportProtocol::ICMPv6:
-        return handle_icmpv6(eth, packet, packet_timestamp);
+        return handle_icmpv6(eth, packet, packet_timestamp, adapter);
     default:
         dbgln_if(IPV6_DEBUG, "handle_ipv6: Unhandled protocol {:#02x}", packet.next_header());
         break;
     }
 }
 
-void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_packet, UnixDateTime const& packet_timestamp)
+void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_packet, UnixDateTime const& packet_timestamp, RefPtr<NetworkAdapter> adapter)
 {
-    auto& icmp_header = *static_cast<ICMPv6Header const*>(ipv6_packet.payload());
-    dbgln_if(ICMPV6_DEBUG, "handle_icmp6: source={}, destination={}, type={:#02x}, code={:#02x}", ipv6_packet.source().to_string(), ipv6_packet.destination().to_string(), icmp_header.type(), icmp_header.code());
+    auto& icmpv6_header = *static_cast<ICMPv6Header const*>(ipv6_packet.payload());
+    dbgln_if(ICMPV6_DEBUG, "handle_icmp6: source={}, destination={}, type={:#02x}, code={:#02x}", ipv6_packet.source().to_string(), ipv6_packet.destination().to_string(), icmpv6_header.type(), icmpv6_header.code());
+
+    IPv6Address temp = IPv6Address({0xfe, 0x80, 0, 0, 0,0,0,0, 0,0,0,0, 0,0,33,55});
 
     // TODO: Hand ICMPv6 packets to listening user sockets, once those can exist.
 
-    auto adapter = NetworkingManagement::the().from_ipv6_address(ipv6_packet.destination());
-    if (!adapter)
-        return;
-    (void)eth;
-    (void)packet_timestamp;
-    /*if (icmp_header.type() == ICMPv4Type::EchoRequest) {
-        auto& request = reinterpret_cast<ICMPEchoPacket const&>(icmp_header);
-        dbgln("handle_icmp6: EchoRequest from {}: id={}, seq={}", ipv6_packet.source(), (u16)request.identifier, (u16)request.sequence_number);
+    if (icmpv6_header.type() == ICMPv6Type::NeighborSolicitation) {
+        // TODO: we probably want a separate function for each type here
+        dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got neighbor solicitation");
+        auto& request = reinterpret_cast<ICMPv6NeighborSolicitation const&>(icmpv6_header);
         size_t icmp_packet_size = ipv6_packet.payload_size();
-        if (icmp_packet_size < sizeof(ICMPEchoPacket)) {
-            dbgln("handle_icmp: EchoRequest packet is too small, ignoring.");
+        if (icmp_packet_size < sizeof(ICMPv6NeighborSolicitation)) {
+            dbgln("handle_icmp6: neighbor solicitation packet too small, ignoring.");
             return;
         }
-        auto ipv4_payload_offset = adapter->ipv4_payload_offset();
-        auto packet = adapter->acquire_packet_buffer(ipv4_payload_offset + icmp_packet_size);
+
+        if (request.target_address != temp) {
+            dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got a packet, but not for us!");
+            return;
+        }
+
+
+        struct [[gnu::packed]] xxxx {
+            ICMPv6NeighborAdvertisement base;
+            ICMPv6OptionLinkLayerAddress option;
+        };
+
+        auto ipv6_payload_offset = adapter->ipv6_payload_offset();
+        auto packet = adapter->acquire_packet_buffer(ipv6_payload_offset + sizeof(xxxx));
         if (!packet) {
             dbgln("Could not allocate packet buffer while sending ICMP packet");
             return;
         }
-        adapter->fill_in_ipv4_header(*packet, adapter->ipv4_address(), eth.source(), ipv6_packet.source(), TransportProtocol::ICMP, icmp_packet_size, 0, 64);
-        memset(packet->buffer->data() + ipv4_payload_offset, 0, sizeof(ICMPEchoPacket));
-        auto& response = *(ICMPEchoPacket*)(packet->buffer->data() + ipv4_payload_offset);
-        response.header.set_type(ICMPv4Type::EchoReply);
-        response.header.set_code(0);
-        response.identifier = request.identifier;
-        response.sequence_number = request.sequence_number;
-        if (size_t icmp_payload_size = icmp_packet_size - sizeof(ICMPEchoPacket))
-            memcpy(response.payload(), request.payload(), icmp_payload_size);
-        response.header.set_checksum(internet_checksum(&response, icmp_packet_size));
-        // FIXME: What is the right TTL value here? Is 64 ok? Should we use the same TTL as the echo request?
+
+        // TODO: pass through packet_timestamp to raw sockets (when we have those for IPv6)
+        (void)packet_timestamp;
+
+        size_t icmp_payload_size = sizeof(xxxx);
+        adapter->fill_in_ipv6_header(*packet, temp, eth.source(), ipv6_packet.source(), TransportProtocol::ICMPv6, icmp_payload_size, 255);
+        memset(packet->buffer->data() + ipv6_payload_offset, 0, icmp_payload_size);
+
+        auto& response = *(xxxx*)(packet->buffer->data() + ipv6_payload_offset);
+
+        response.base.header.set_type(ICMPv6Type::NeighborAdvertisement);
+        response.base.header.set_code(0);
+        response.base.solicited = 1;
+        response.base.override = 1;
+        response.base.target_address = temp;
+        response.base.header.set_checksum(0);
+        response.option.type = 2;
+        response.option.length = 1;
+        response.option.address = adapter->mac_address();
+
+        IPv6PseudoHeader meow;
+        meow.source_address = temp;
+        meow.target_address = ipv6_packet.source();
+        meow.packet_length = 32;
+        meow.next_header = 58;
+
+        ICMPv6OptionLinkLayerAddress meww;
+        meww.address = adapter->mac_address();
+
+        struct [[gnu::packed]] {
+            IPv6PseudoHeader a;
+            xxxx b;
+        } yyyy;
+
+        yyyy.a = meow;
+        yyyy.b = response;
+
+        dbgln("pain {:hex-dump}", Bytes {bit_cast<u8*>(&yyyy), sizeof(yyyy)});
+        
+        response.base.header.set_checksum(internet_checksum(&yyyy, sizeof(yyyy)));
+        dbgln("{}", packet->bytes());
         adapter->send_packet(packet->bytes());
         adapter->release_packet_buffer(*packet);
-    }*/
-    dbgln_if(ICMPV6_DEBUG, "we have an adapter: {}", adapter->name());
+    } else if (icmpv6_header.type() == ICMPv6Type::EchoRequest) {
+        dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got echo request");
+        auto& request = reinterpret_cast<ICMPv6Echo const&>(icmpv6_header);
+        size_t icmp_packet_size = ipv6_packet.payload_size();
+        if (icmp_packet_size < sizeof(ICMPv6Echo)) {
+            dbgln("handle_icmp6: echo request packet too small, ignoring.");
+            return;
+        }
+
+        auto ipv6_payload_offset = adapter->ipv6_payload_offset();
+        auto packet = adapter->acquire_packet_buffer(ipv6_payload_offset + icmp_packet_size);
+        if (!packet) {
+            dbgln("Could not allocate packet buffer while sending ICMP packet");
+            return;
+        }
+        
+        size_t icmp_payload_size = icmp_packet_size;
+        adapter->fill_in_ipv6_header(*packet, temp, eth.source(), ipv6_packet.source(), TransportProtocol::ICMPv6, icmp_payload_size, 64);
+        memset(packet->buffer->data() + ipv6_payload_offset, 0, icmp_payload_size);
+
+        auto& response = *(ICMPv6Echo*)(packet->buffer->data() + ipv6_payload_offset);
+
+        response.header.set_type(ICMPv6Type::EchoReply);
+        response.header.set_code(0);
+        response.header.set_checksum(0);
+        response.identifier = request.identifier;
+        response.sequence_number = request.sequence_number;
+
+        if (size_t icmp_payload_size = icmp_packet_size - sizeof(ICMPv6Echo))
+            memcpy(response.payload(), request.payload(), icmp_payload_size);
+
+        IPv6PseudoHeader meow;
+        meow.source_address = temp;
+        meow.target_address = ipv6_packet.source();
+        meow.packet_length = icmp_packet_size;
+        meow.next_header = 58;
+
+        struct [[gnu::packed]] {
+            IPv6PseudoHeader a;
+            ICMPv6Echo b;
+        } yyyy;
+
+        if (size_t icmp_payload_size = icmp_packet_size - sizeof(ICMPv6Echo))
+            memcpy(yyyy.b.payload(), request.payload(), icmp_payload_size);
+
+        yyyy.a = meow;
+        yyyy.b = response;
+
+        u8 asdf[sizeof(yyyy)];
+        memmove(asdf, &yyyy, sizeof(yyyy));
+        dbgln("pain {:hex-dump}", asdf);
+        
+        response.header.set_checksum(internet_checksum(&yyyy, sizeof(IPv6PseudoHeader) + icmp_packet_size));
+
+        dbgln("{}", packet->bytes());
+        adapter->send_packet(packet->bytes());
+        adapter->release_packet_buffer(*packet);
+
+    } else {
+        dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got unknown ICMPv6 type {:#02x}", icmpv6_header.type());
+    }
+    return;
 }
 
 void handle_icmp(EthernetFrameHeader const& eth, IPv4Packet const& ipv4_packet, UnixDateTime const& packet_timestamp)

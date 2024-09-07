@@ -78,9 +78,11 @@ RefPtr<NetworkAdapter> NetworkingManagement::from_ipv6_address(IPv6Address const
         return m_loopback_adapter;
     return m_adapters.with([&](auto& adapters) -> RefPtr<NetworkAdapter> {
         for (auto& adapter : adapters) {
+            dbgln("meow... theirs: {}, ours: {}", adapter->ipv6_address(), address);
             if (adapter->ipv6_address() == address || adapter->ipv6_multicast() == address)
                 return adapter;
         }
+        dbgln("failed to find adapter :(");
         return nullptr;
     });
 }

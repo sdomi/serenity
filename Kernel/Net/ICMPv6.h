@@ -13,14 +13,18 @@
 // https://www.rfc-editor.org/rfc/rfc4443
 
 // Section 2.1
-enum class ICMPv6Type {
-    DestinationUnreachable = 1,
-    PacketTooBig = 2,
-    TimeExceeded = 3,
-    ParameterProblem = 4,
-    EchoRequest = 128,
-    EchoReply = 129,
-    NeighborSolicitation = 135,
+// TODO: can i make this a class like klfr suggested? that broke some cast, tho..
+struct ICMPv6Type {
+    enum {
+        DestinationUnreachable = 1,
+        PacketTooBig = 2,
+        TimeExceeded = 3,
+        ParameterProblem = 4,
+        EchoRequest = 128,
+        EchoReply = 129,
+        NeighborSolicitation = 135,
+        NeighborAdvertisement = 136,
+    };
 };
 
 class [[gnu::packed]] ICMPv6Header {
@@ -59,13 +63,45 @@ struct [[gnu::packed]] ICMPv6EchoPacket {
 
 static_assert(AssertSize<ICMPv6EchoPacket, 8>());
 
-struct [[gnu::packed]] IPv6NeighborSolicitation {
+struct [[gnu::packed]] ICMPv6NeighborSolicitation {
     ICMPv6Header header;
     u32 reserved;
     IPv6Address target_address;
 
-    MACAddress* source_link_layer_address() { return bit_cast<MACAddress*>(this + sizeof(IPv6NeighborSolicitation)); }
-    MACAddress const* source_link_layer_address() const { return bit_cast<MACAddress const*>(this + sizeof(IPv6NeighborSolicitation)); }
+    MACAddress* source_link_layer_address() { return bit_cast<MACAddress*>(this + sizeof(ICMPv6NeighborSolicitation)); }
+    MACAddress const* source_link_layer_address() const { return bit_cast<MACAddress const*>(this + sizeof(ICMPv6NeighborSolicitation)); }
 };
 
-static_assert(AssertSize<IPv6NeighborSolicitation, 6 * 32 / 8>());
+static_assert(AssertSize<ICMPv6NeighborSolicitation, 6 * 32 / 8>());
+
+struct [[gnu::packed]] ICMPv6NeighborAdvertisement {
+    ICMPv6Header header;
+    union {
+        struct [[gnu::packed]] {
+            u32 _reserved1 : 5;
+            bool override : 1;
+            bool solicited : 1;
+            bool router : 1;
+            u32 _reserved2 : 24;
+        };
+        u32 flags;
+    };
+    IPv6Address target_address;
+};
+
+static_assert(AssertSize<ICMPv6NeighborAdvertisement, 6 * 32 / 8>());
+
+struct [[gnu::packed]] ICMPv6OptionLinkLayerAddress {
+    u8 type; // default: Target link-layer address
+    u8 length; // fight me
+    MACAddress address;
+};
+
+struct [[gnu::packed]] ICMPv6Echo {
+    ICMPv6Header header;
+    u16 identifier;
+    u16 sequence_number;
+
+    void* payload() { return this + 1; }
+    void const* payload() const { return this + 1; }
+};
