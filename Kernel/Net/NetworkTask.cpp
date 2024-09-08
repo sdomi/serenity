@@ -271,8 +271,15 @@ void handle_ipv6(EthernetFrameHeader const& eth, size_t frame_size, UnixDateTime
 
 void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_packet, UnixDateTime const& packet_timestamp, RefPtr<NetworkAdapter> adapter)
 {
+    // TODO: pass through packet_timestamp to raw sockets (when we have those for IPv6)
+    (void)packet_timestamp;
+
     auto& icmpv6_header = *static_cast<ICMPv6Header const*>(ipv6_packet.payload());
     dbgln_if(ICMPV6_DEBUG, "handle_icmp6: source={}, destination={}, type={:#02x}, code={:#02x}", ipv6_packet.source().to_string(), ipv6_packet.destination().to_string(), icmpv6_header.type(), icmpv6_header.code());
+
+    RefPtr<PacketWithTimestamp> packet;
+
+    size_t icmp_packet_size = ipv6_packet.payload_size();
 
     IPv6Address temp = IPv6Address({0xfe, 0x80, 0, 0, 0,0,0,0, 0,0,0,0, 0,0,33,55});
 
@@ -282,7 +289,7 @@ void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_
         // TODO: we probably want a separate function for each type here
         dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got neighbor solicitation");
         auto& request = reinterpret_cast<ICMPv6NeighborSolicitation const&>(icmpv6_header);
-        size_t icmp_packet_size = ipv6_packet.payload_size();
+        
         if (icmp_packet_size < sizeof(ICMPv6NeighborSolicitation)) {
             dbgln("handle_icmp6: neighbor solicitation packet too small, ignoring.");
             return;
@@ -293,27 +300,23 @@ void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_
             return;
         }
 
-
-        struct [[gnu::packed]] xxxx {
+        struct [[gnu::packed]] advertisement_with_option {
             ICMPv6NeighborAdvertisement base;
             ICMPv6OptionLinkLayerAddress option;
         };
 
         auto ipv6_payload_offset = adapter->ipv6_payload_offset();
-        auto packet = adapter->acquire_packet_buffer(ipv6_payload_offset + sizeof(xxxx));
+        packet = adapter->acquire_packet_buffer(ipv6_payload_offset + sizeof(advertisement_with_option));
         if (!packet) {
             dbgln("Could not allocate packet buffer while sending ICMP packet");
             return;
         }
 
-        // TODO: pass through packet_timestamp to raw sockets (when we have those for IPv6)
-        (void)packet_timestamp;
-
-        size_t icmp_payload_size = sizeof(xxxx);
+        size_t icmp_payload_size = sizeof(advertisement_with_option);
         adapter->fill_in_ipv6_header(*packet, temp, eth.source(), ipv6_packet.source(), TransportProtocol::ICMPv6, icmp_payload_size, 255);
         memset(packet->buffer->data() + ipv6_payload_offset, 0, icmp_payload_size);
 
-        auto& response = *(xxxx*)(packet->buffer->data() + ipv6_payload_offset);
+        auto& response = *(advertisement_with_option*)(packet->buffer->data() + ipv6_payload_offset);
 
         response.base.header.set_type(ICMPv6Type::NeighborAdvertisement);
         response.base.header.set_code(0);
@@ -325,40 +328,36 @@ void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_
         response.option.length = 1;
         response.option.address = adapter->mac_address();
 
-        IPv6PseudoHeader meow;
-        meow.source_address = temp;
-        meow.target_address = ipv6_packet.source();
-        meow.packet_length = 32;
-        meow.next_header = 58;
+        IPv6PseudoHeader pseudo_header;
+        pseudo_header.source_address = temp;
+        pseudo_header.target_address = ipv6_packet.source();
+        pseudo_header.packet_length = 32;
+        pseudo_header.next_header = TransportProtocol::ICMPv6;
 
-        ICMPv6OptionLinkLayerAddress meww;
-        meww.address = adapter->mac_address();
+        ICMPv6OptionLinkLayerAddress option;
+        option.address = adapter->mac_address();
 
         struct [[gnu::packed]] {
             IPv6PseudoHeader a;
-            xxxx b;
-        } yyyy;
+            advertisement_with_option b;
+        } pseudo_packet;
 
-        yyyy.a = meow;
-        yyyy.b = response;
-
-        dbgln("pain {:hex-dump}", Bytes {bit_cast<u8*>(&yyyy), sizeof(yyyy)});
+        pseudo_packet.a = pseudo_header;
+        pseudo_packet.b = response;
         
-        response.base.header.set_checksum(internet_checksum(&yyyy, sizeof(yyyy)));
-        dbgln("{}", packet->bytes());
-        adapter->send_packet(packet->bytes());
-        adapter->release_packet_buffer(*packet);
+        response.base.header.set_checksum(internet_checksum(&pseudo_packet, sizeof(pseudo_packet)));
+        // adapter->send_packet(packet->bytes());
+        // adapter->release_packet_buffer(*packet);
     } else if (icmpv6_header.type() == ICMPv6Type::EchoRequest) {
         dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got echo request");
         auto& request = reinterpret_cast<ICMPv6Echo const&>(icmpv6_header);
-        size_t icmp_packet_size = ipv6_packet.payload_size();
         if (icmp_packet_size < sizeof(ICMPv6Echo)) {
             dbgln("handle_icmp6: echo request packet too small, ignoring.");
             return;
         }
 
         auto ipv6_payload_offset = adapter->ipv6_payload_offset();
-        auto packet = adapter->acquire_packet_buffer(ipv6_payload_offset + icmp_packet_size);
+        packet = adapter->acquire_packet_buffer(ipv6_payload_offset + icmp_packet_size);
         if (!packet) {
             dbgln("Could not allocate packet buffer while sending ICMP packet");
             return;
@@ -383,32 +382,27 @@ void handle_icmpv6(EthernetFrameHeader const& eth, IPv6PacketHeader const& ipv6_
         meow.source_address = temp;
         meow.target_address = ipv6_packet.source();
         meow.packet_length = icmp_packet_size;
-        meow.next_header = 58;
+        meow.next_header = TransportProtocol::ICMPv6;
 
         struct [[gnu::packed]] {
             IPv6PseudoHeader a;
             ICMPv6Echo b;
-        } yyyy;
+        } pseudo_packet;
 
         if (size_t icmp_payload_size = icmp_packet_size - sizeof(ICMPv6Echo))
-            memcpy(yyyy.b.payload(), request.payload(), icmp_payload_size);
+            memcpy(pseudo_packet.b.payload(), request.payload(), icmp_payload_size);
 
-        yyyy.a = meow;
-        yyyy.b = response;
-
-        u8 asdf[sizeof(yyyy)];
-        memmove(asdf, &yyyy, sizeof(yyyy));
-        dbgln("pain {:hex-dump}", asdf);
+        pseudo_packet.a = meow;
+        pseudo_packet.b = response;
         
-        response.header.set_checksum(internet_checksum(&yyyy, sizeof(IPv6PseudoHeader) + icmp_packet_size));
-
-        dbgln("{}", packet->bytes());
-        adapter->send_packet(packet->bytes());
-        adapter->release_packet_buffer(*packet);
-
+        response.header.set_checksum(internet_checksum(&pseudo_packet, sizeof(IPv6PseudoHeader) + icmp_packet_size));
     } else {
         dbgln_if(ICMPV6_DEBUG, "handle_icmp6: got unknown ICMPv6 type {:#02x}", icmpv6_header.type());
+        return;
     }
+
+    adapter->send_packet(packet->bytes());
+    adapter->release_packet_buffer(*packet);
     return;
 }
 

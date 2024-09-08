@@ -11,6 +11,7 @@
 #include <AK/Endian.h>
 #include <AK/IPv6Address.h>
 #include <AK/Types.h>
+#include <Kernel/Net/IPv4/IP.h>
 
 namespace Kernel {
 
@@ -83,7 +84,7 @@ struct [[gnu::packed]] IPv6PseudoHeader {
     u8 zero { 0 };
     u8 zero_ { 0 };
     u8 zero__ { 0 };
-    NetworkOrdered<u8> next_header;
+    TransportProtocol next_header;
 };
 
 }
