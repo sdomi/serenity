@@ -203,10 +203,10 @@ ErrorOr<NonnullOwnPtr<Partition::PartitionTable>> StorageManagement::try_to_init
     auto mbr_table_or_error = Partition::MBRPartitionTable::try_to_initialize(device);
     if (!mbr_table_or_error.is_error())
         return mbr_table_or_error.release_value();
-    auto ebr_table_or_error = Partition::EBRPartitionTable::try_to_initialize(device);
-    if (!ebr_table_or_error.is_error()) {
-        return ebr_table_or_error.release_value();
-    }
+    // auto ebr_table_or_error = Partition::EBRPartitionTable::try_to_initialize(device);
+    // if (!ebr_table_or_error.is_error()) {
+    //     return ebr_table_or_error.release_value();
+    // }
     return TRY(Partition::GUIDPartitionTable::try_to_initialize(device));
 }
 

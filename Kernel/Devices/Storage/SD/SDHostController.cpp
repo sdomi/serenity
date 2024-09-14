@@ -56,7 +56,7 @@ constexpr u32 data_timeout_counter_value_max = 0b1110 << 16;
 constexpr u32 software_reset_for_all = 0x01000000;
 
 // In Interrupt Status Register
-constexpr u32 command_complete = 1 << 0;
+constexpr u32 command_complete = 1;
 constexpr u32 transfer_complete = 1 << 1;
 constexpr u32 buffer_write_ready = 1 << 4;
 constexpr u32 buffer_read_ready = 1 << 5;
@@ -85,14 +85,12 @@ ErrorOr<void> SDHostController::initialize()
     if (!m_registers)
         return EIO;
 
-    meowln("host controller version {}", (u8)host_version());
+    meowln("hc v{}", (u8)host_version());
 
     // if (host_version() != SD::HostVersion::Version3 && host_version() != SD::HostVersion::Version2)
     //     return ENOTSUP;
 
-    meowln("pre reset sdhci");
     TRY(reset_host_controller());
-    meowln("post reset sdhci");
 
     m_registers->host_configuration_0 = 8391480; // TODO xD
     m_registers->interrupt_status_enable = 0xffffffff;
@@ -109,34 +107,36 @@ ErrorOr<void> SDHostController::initialize()
 
 void SDHostController::try_enable_dma()
 {
-    if (m_registers->capabilities.adma2) {
-        auto maybe_dma_buffer = MM.allocate_dma_buffer_pages(dma_region_size, "SDHC DMA Buffer"sv, Memory::Region::Access::ReadWrite);
-        if (maybe_dma_buffer.is_error()) {
-            meowln("Could not allocate DMA pages for SDHC: {}", maybe_dma_buffer.error());
-        } else {
-            m_dma_region = maybe_dma_buffer.release_value();
-            meowln("Allocated SDHC DMA buffer at {}", m_dma_region->physical_page(0)->paddr());
-            // FIXME: This check does not seem to work, qemu supports 64 bit addressing, but we don't seem to detect it
-            // FIXME: Hardcoding to use the 64 bit mode leads to transfer timeouts, without any errors reported from qemu
-            if (host_version() != SD::HostVersion::Version3 && m_registers->capabilities.dma_64_bit_addressing_v3) {
-                meowln("Setting SDHostController to operate using ADMA2 with 64 bit addressing");
-                m_mode = OperatingMode::ADMA2_64;
-                m_registers->host_configuration_0 = m_registers->host_configuration_0 | dma_select_adma2_64;
-            } else {
-                // FIXME: Use a way that guarantees memory addresses below the 32 bit threshold
-                VERIFY(m_dma_region->physical_page(0)->paddr().get() >> 32 == 0);
-                VERIFY(m_dma_region->physical_page(dma_region_size / PAGE_SIZE - 1)->paddr().get() >> 32 == 0);
-
-                meowln("Setting SDHostController to operate using ADMA2 with 32 bit addressing");
-                m_mode = OperatingMode::ADMA2_32;
-                m_registers->host_configuration_0 = m_registers->host_configuration_0 | dma_select_adma2_32;
-            }
-        }
-    }
+//     if (m_registers->capabilities.adma2) {
+//         auto maybe_dma_buffer = MM.allocate_dma_buffer_pages(dma_region_size, "SDHC DMA Buffer"sv, Memory::Region::Access::ReadWrite);
+//         if (maybe_dma_buffer.is_error()) {
+//             meowln("Could not allocate DMA pages for SDHC: {}", maybe_dma_buffer.error());
+//         } else {
+//             m_dma_region = maybe_dma_buffer.release_value();
+//             meowln("Allocated SDHC DMA buffer at {}", m_dma_region->physical_page(0)->paddr());
+//             // FIXME: This check does not seem to work, qemu supports 64 bit addressing, but we don't seem to detect it
+//             // FIXME: Hardcoding to use the 64 bit mode leads to transfer timeouts, without any errors reported from qemu
+//             // if (host_version() != SD::HostVersion::Version3 && m_registers->capabilities.dma_64_bit_addressing_v3) {
+//             //     meowln("Setting SDHostController to operate using ADMA2 with 64 bit addressing");
+//             //     m_mode = OperatingMode::ADMA2_64;
+//             //     m_registers->host_configuration_0 = m_registers->host_configuration_0 | dma_select_adma2_64;
+//             // } else {
+//                 // FIXME: Use a way that guarantees memory addresses below the 32 bit threshold
+//                 VERIFY(m_dma_region->physical_page(0)->paddr().get() >> 32 == 0);
+//                 VERIFY(m_dma_region->physical_page(dma_region_size / PAGE_SIZE - 1)->paddr().get() >> 32 == 0);
+// 
+//                 meowln("Setting SDHostController to operate using ADMA2 with 32 bit addressing");
+//                 m_mode = OperatingMode::ADMA2_32;
+//                 m_registers->host_configuration_0 = m_registers->host_configuration_0 | dma_select_adma2_32;
+//             // }
+//         }
+//     }
 }
 
 ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_card()
 {
+    bool card_is_mmc = false;
+    SD::OperatingConditionRegister ocr = {};
     meowln("CARD INIT");
     if (!is_card_inserted())
         meowln("there is no card. trying anyways.");
@@ -161,108 +161,163 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
     // 1. Send CMD0 (GO_IDLE_STATE) to the card
     TRY(issue_command(SD::Commands::go_idle_state, 0));
     meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
-    // TRY(wait_for_response());
+    TRY(wait_for_response());
+    meowln("{:hex-dump}", (u32)m_registers->interrupt_status.raw);
     // if (auto cmd0_response = wait_for_response();
-    	// cmd0_response.is_error()) {
-    	// meowln("likely a MMC card. trying cmd0 again");
+    // 	cmd0_response.is_error()) {
+    if (true) {
+    	meowln("likely a MMC card.");
+    	card_is_mmc = true;
 
         // 7.1, OCR register
-        // TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0b00000001000000011111111100000000));
-        // TRY(issue_command_mmc(MMC::Commands::go_idle_state, 0));
-        // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
-    
-    meowln("cmd0 done, trying cmd1");
-    TRY(issue_command_mmc(MMC::Commands::send_op_cond, 1));
-    auto aaaa = wait_for_response_mmc();
-    if (aaaa.is_error()) {  
-        meowln("got error on mmc cmd1!");
-        meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+        meowln("cmd0 done, trying cmd1 ({:hex-dump})", (u32)m_registers->interrupt_status.raw);
+        TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0xC0FF8080));
+        meowln("delay");
+        auto aaaa = wait_for_response_mmc();
+        while (true) {
+            if (aaaa.is_error()) {  
+                meowln("got error on mmc cmd1!");
+                meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+                return EIO;
+            }
+            if (aaaa.value().response[0] != 0x40ff8080)
+                break;
+            TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0xC0FF8080));
+            aaaa = wait_for_response_mmc();
+        }
+        meowln("finished cmd1: {}", (u32)aaaa.value().response[0]);
+ //else {
+        //     meowln("pain {:hex-dump}", aaaa.value().response[0]);
+        // }
+        
+        ocr.raw = aaaa.value().response[0];
 
-        TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0xffffffff));
-        TRY(wait_for_response_mmc());
-        meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+        // meowln("cmd1 again..");
+        // TRY(issue_command_mmc(MMC::Commands::send_op_cond, aaaa.value().response[0]));
+        // aaaa = wait_for_response_mmc();
+        // meowln("{:hex-dump}", (u32)m_registers->interrupt_status.raw);
+        // if (aaaa.is_error()) {  
+        //     meowln("got error on mmc cmd1!");
+        //     meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+        //     return EIO;
+        // }
+        
+
+        // TRY(sd_clock_stop());
+        // TRY(sd_clock_supply(10000000));
+        // meowln("YOLO: set clock to 10MHz");
+
+//         TRY(issue_command_mmc(MMC::Commands::all_send_cid, 0));
+//         meowln("sent cmd2");
+// 
+//         auto bbbb = wait_for_response_mmc();
+//         if (bbbb.is_error()) {  
+//             meowln("got error on mmc cmd2!");
+//             meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+//             return EIO;
+//         }
+
+//         TRY(issue_command_mmc(MMC::Commands::set_relative_addr, 0x859 << 16));
+//         meowln("sent cmd3");
+// 
+//         aaaa = wait_for_response_mmc();
+//         if (aaaa.is_error()) {
+//             meowln("got error on mmc cmd3!");
+//             meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+//             return EIO;
+//         }
+// 
+//         TRY(issue_command_mmc(MMC::Commands::select_card, 0x859 << 16));
+//         meowln("sent cmd7");
+// 
+//         aaaa = wait_for_response_mmc();
+//         if (aaaa.is_error()) {  
+//             meowln("got error on mmc cmd7!");
+//             meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+//             return EIO;
+//         }
+//         
+//         meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
     } else {
-        meowln("pain {:hex-dump}", aaaa.value().response[0]);
-    }
-    meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
-    // }
-    meowln("cmd0 done");
+        meowln("cmd0 done. likely SD");        
 
-    // 2. Send CMD8 (SEND_IF_COND) to the card
-    // SD interface condition: 7:0 = check pattern, 11:8 = supply voltage
-    //      0x1aa: check pattern = 10101010, supply voltage = 1 => 2.7-3.6V
-    u32 const voltage_window = 0x1aa;
-    meowln("cmd8");
-    TRY(issue_command(SD::Commands::send_if_cond, voltage_window));
-    auto interface_condition_response = wait_for_response();
-    meowln("cmd8 done");
+        // 2. Send CMD8 (SEND_IF_COND) to the card
+        // SD interface condition: 7:0 = check pattern, 11:8 = supply voltage
+        //      0x1aa: check pattern = 10101010, supply voltage = 1 => 2.7-3.6V
+        u32 const voltage_window = 0x1aa;
+        meowln("cmd8");
+        TRY(issue_command(SD::Commands::send_if_cond, voltage_window));
+        auto interface_condition_response = wait_for_response();
+        meowln("cmd8 done");
 
-    // 3. If the card does not respond to CMD8 it means that (Ver2.00 or later
-    // SD Memory Card(voltage mismatch) or Ver1.X SD Memory Card or not SD
-    // Memory Card)
-    if (interface_condition_response.is_error()) {
-        // dbgln("mmc handling start");
-        // TODO: This is supposed to be the "No Response" branch of the
-        // flowchart in Figure 4-2 of the PLSS spec
-        // TRY(issue_command_mmc(MMC::Commands::go_idle_state, 0));
-        // TRY(wait_for_response_mmc());
+        // 3. If the card does not respond to CMD8 it means that (Ver2.00 or later
+        // SD Memory Card(voltage mismatch) or Ver1.X SD Memory Card or not SD
+        // Memory Card)
+        if (interface_condition_response.is_error()) {
+            // dbgln("mmc handling start");
+            // TODO: This is supposed to be the "No Response" branch of the
+            // flowchart in Figure 4-2 of the PLSS spec
+            // TRY(issue_command_mmc(MMC::Commands::go_idle_state, 0));
+            // TRY(wait_for_response_mmc());
 
-        // TRY(issue_command_mmc(MMC::Commands::select_card, 1 << 16));
-        // auto aaaa = wait_for_response_mmc();
-        // if (aaaa.is_error()) {
-            // dbgln("got error on mmc select_card!");
-        // } else {
-            // dbgln("pain {:hex-dump}", aaaa.value().response[0]);
-        meowln("asdf");
-        return EIO;    
-    }
-    // }
+            // TRY(issue_command_mmc(MMC::Commands::select_card, 1 << 16));
+            // auto aaaa = wait_for_response_mmc();
+            // if (aaaa.is_error()) {
+                // dbgln("got error on mmc select_card!");
+            // } else {
+                // dbgln("pain {:hex-dump}", aaaa.value().response[0]);
+            meowln("asdf");
+            return EIO;    
+        }
+        // }
 
-    // 4. If the card responds to CMD8, but it's not a valid response then the
-    // card is not usable
-    if (interface_condition_response.value().response[0] != voltage_window) {
-        // FIXME: We should probably try again with a lower voltage window
-        return ENODEV;
-    }
+        // 4. If the card responds to CMD8, but it's not a valid response then the
+        // card is not usable
+        if (interface_condition_response.value().response[0] != voltage_window) {
+            // FIXME: We should probably try again with a lower voltage window
+            return ENODEV;
+        }
 
-    // 5. Send ACMD41 (SEND_OP_COND) with HCS=1 to the card, repeat this until the card is ready or timeout
-    SD::OperatingConditionRegister ocr = {};
-    bool card_is_usable = true;
-    if (!retry_with_timeout([&]() {
-            if (issue_command(SD::Commands::app_cmd, 0).is_error() || wait_for_response().is_error())
-                return false;
-
-            if (issue_command(SD::Commands::app_send_op_cond, acmd41_arg).is_error())
-                return false;
-
-            if (auto acmd41_response = wait_for_response();
-                !acmd41_response.is_error()) {
-
-                // 20. Check if the card supports the voltage windows we requested and SDHC
-                u32 response = acmd41_response.value().response[0];
-                if ((response & acmd41_voltage) != acmd41_voltage) {
-                    card_is_usable = false;
+        // 5. Send ACMD41 (SEND_OP_COND) with HCS=1 to the card, repeat this until the card is ready or timeout
+        // SD::OperatingConditionRegister ocr = {};
+        bool card_is_usable = true;
+        if (!retry_with_timeout([&]() {
+                if (issue_command(SD::Commands::app_cmd, 0).is_error() || wait_for_response().is_error())
                     return false;
+
+                if (issue_command(SD::Commands::app_send_op_cond, acmd41_arg).is_error())
+                    return false;
+
+                if (auto acmd41_response = wait_for_response();
+                    !acmd41_response.is_error()) {
+
+                    // 20. Check if the card supports the voltage windows we requested and SDHC
+                    u32 response = acmd41_response.value().response[0];
+                    if ((response & acmd41_voltage) != acmd41_voltage) {
+                        card_is_usable = false;
+                        return false;
+                    }
+
+                    ocr.raw = acmd41_response.value().response[0];
                 }
 
-                ocr.raw = acmd41_response.value().response[0];
-            }
-
-            return ocr.card_power_up_status == 1;
-        })) {
-        return card_is_usable ? EIO : ENODEV;
+                return ocr.card_power_up_status == 1;
+            })) {
+            return card_is_usable ? EIO : ENODEV;
+        }
     }
 
     // 6. If you requested to switch to 1.8V, and the card accepts, execute a voltage switch sequence
     //    (we didn't ask it)
 
     // 7. Send CMD2 (ALL_SEND_CID) to the card
-    TRY(issue_command(SD::Commands::all_send_cid, 0));
+    TRY(issue_command(SD::Commands::all_send_cid, 0)); // good
+    meowln("sent sd cmd2");
     auto all_send_cid_response = TRY(wait_for_response());
     auto cid = bit_cast<SD::CardIdentificationRegister>(all_send_cid_response.response);
 
     // 8. Send CMD3 (SEND_RELATIVE_ADDR) to the card
-    TRY(issue_command(SD::Commands::send_relative_addr, 0));
+    TRY(issue_command(SD::Commands::send_relative_addr, 0)); // TODO: 0 is reserved?
     auto send_relative_addr_response = TRY(wait_for_response());
     u32 rca = send_relative_addr_response.response[0]; // FIXME: Might need to clear some bits here
 
@@ -277,12 +332,14 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
     u64 capacity = static_cast<u64>(block_count) * block_size;
     u64 card_capacity_in_blocks = capacity / block_len;
 
-    if (m_registers->capabilities.high_speed) {
-        dbgln("SDHC: Enabling High Speed mode");
-        m_registers->host_configuration_0 = m_registers->host_configuration_0 | high_speed_enable;
-        TRY(sd_clock_frequency_change(max_supported_sdsc_frequency_high_speed));
-    } else {
-        TRY(sd_clock_frequency_change(max_supported_sdsc_frequency));
+    if (!card_is_mmc) {
+        if (m_registers->capabilities.high_speed) {
+            dbgln("SDHC: Enabling High Speed mode");
+            m_registers->host_configuration_0 = m_registers->host_configuration_0 | high_speed_enable;
+            TRY(sd_clock_frequency_change(max_supported_sdsc_frequency_high_speed));
+        } else {
+            TRY(sd_clock_frequency_change(max_supported_sdsc_frequency));
+        }
     }
 
     TRY(issue_command(SD::Commands::select_card, rca));
@@ -290,36 +347,43 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
 
     // Set block length to 512 if the card is SDSC.
     // All other models only support 512 byte blocks so they don't need to be explicitly told
-    if (!ocr.card_capacity_status) {
-        TRY(issue_command(SD::Commands::set_block_len, block_len));
-        TRY(wait_for_response());
+    if (!card_is_mmc) {
+        if (!ocr.card_capacity_status) {
+            TRY(issue_command(SD::Commands::set_block_len, block_len));
+            TRY(wait_for_response());
+        }
     }
 
-    auto scr = TRY(retrieve_sd_configuration_register(rca));
+    SD::SDConfigurationRegister scr;
+    if (!card_is_mmc) {
+        scr = TRY(retrieve_sd_configuration_register(rca));
+    }
 
-    // SDHC 3.4: "Changing Bus Width"
+    if (!card_is_mmc) {
+        // SDHC 3.4: "Changing Bus Width"
 
-    // 1. Set Card Interrupt Status Enable in the Normal Interrupt Status Enable register to 0 for
-    //    masking incorrect interrupts that may occur while changing the bus width.
-    m_registers->interrupt_status_enable &= ~card_interrupt;
-    // 2. In case of SD memory only card, go to step (4). In case of other card, go to step (3).
-    // 4. Change the bus width mode for an SD card. SD Memory Card bus width is changed by ACMD6
-    //    and SDIO card bus width is changed by setting Bus Width of Bus Interface Control register in
-    //    CCCR.
-    TRY(issue_command(SD::Commands::app_cmd, rca));
-    TRY(wait_for_response());
-    TRY(issue_command(SD::Commands::app_set_bus_width, 0x2)); // 0b00=1 bit bus, 0b10=4 bit bus
-    TRY(wait_for_response());
-    // 5. In case of changing to 4-bit mode, set Data Transfer Width to 1 in the Host Control 1 register.
-    //    In another case (1-bit mode), set this bit to 0.
-    m_registers->host_configuration_0 |= data_transfer_width_4bit;
-    // 6. In case of SD memory only card, go to the 'End'. In case of other card, go to step (7).
-
+        // 1. Set Card Interrupt Status Enable in the Normal Interrupt Status Enable register to 0 for
+        //    masking incorrect interrupts that may occur while changing the bus width.
+        m_registers->interrupt_status_enable &= ~card_interrupt;
+        // 2. In case of SD memory only card, go to step (4). In case of other card, go to step (3).
+        // 4. Change the bus width mode for an SD card. SD Memory Card bus width is changed by ACMD6
+        //    and SDIO card bus width is changed by setting Bus Width of Bus Interface Control register in
+        //    CCCR.
+        TRY(issue_command(SD::Commands::app_cmd, rca));
+        TRY(wait_for_response());
+        TRY(issue_command(SD::Commands::app_set_bus_width, 0x2)); // 0b00=1 bit bus, 0b10=4 bit bus
+        TRY(wait_for_response());
+        // 5. In case of changing to 4-bit mode, set Data Transfer Width to 1 in the Host Control 1 register.
+        //    In another case (1-bit mode), set this bit to 0.
+        m_registers->host_configuration_0 |= data_transfer_width_4bit;
+        // 6. In case of SD memory only card, go to the 'End'. In case of other card, go to step (7).
+    }
     return TRY(DeviceManagement::try_create_device<SDMemoryCard>(
         *this,
         StorageDevice::LUNAddress { controller_id(), 0, 0 },
         hardware_relative_controller_id(), block_len,
         card_capacity_in_blocks, rca, ocr, cid, scr));
+
 }
 
 bool SDHostController::retry_with_timeout(Function<bool()> f, i64 delay_between_tries)
@@ -344,7 +408,7 @@ ErrorOr<void> SDHostController::issue_command(SD::Command const& cmd, u32 argume
     //    That is, when Command Inhibit (CMD) is 1, the Host Driver
     //    shall not issue an SD Command.
     if (!retry_with_timeout([&]() { return !m_registers->present_state.command_inhibit_cmd; })) {
-        dbgln("EIO in issue command command inhibit");
+        meowln("EIO in issue command command inhibit");
         return EIO;
     }
 
@@ -358,7 +422,7 @@ ErrorOr<void> SDHostController::issue_command(SD::Command const& cmd, u32 argume
         // 4. Check Command Inhibit (DAT) in the Present State register. Repeat
         // this step until Command Inhibit (DAT) is set to 0.
         if (!retry_with_timeout([&]() { return !m_registers->present_state.command_inhibit_dat; })) {
-            dbgln("EIO in issue command data inhibit");
+            meowln("EIO in issue command data inhibit");
             return EIO;
         }
     }
@@ -369,6 +433,7 @@ ErrorOr<void> SDHostController::issue_command(SD::Command const& cmd, u32 argume
     // 6. Set the Command register.
     m_registers->transfer_mode_and_command = cmd.raw;
 
+    // meowln("SD: issued {:hex-dump}, {:hex-dump}", cmd.raw, argument);
     // 7. Perform Command Completion Sequence in accordance with 3.7.1.2.
     // Done in wait_for_response()
 
@@ -377,7 +442,7 @@ ErrorOr<void> SDHostController::issue_command(SD::Command const& cmd, u32 argume
 
 ErrorOr<void> SDHostController::issue_command_mmc(MMC::Command const& cmd, u32 argument)
 {
-    meowln("issue_command_mmc: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+    // meowln("issue_command_mmc: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
     if (!retry_with_timeout([&]() { return !m_registers->present_state.command_inhibit_cmd; })) {
         meowln("issue_command_mmc: eio on command_inhibit_cmd");
         return EIO;
@@ -410,7 +475,7 @@ ErrorOr<void> SDHostController::issue_command_mmc(MMC::Command const& cmd, u32 a
     m_registers->argument_1 = argument;
     // m_registers->transfer_mode_and_command = ((u8)cmd.index & 0xff) << 8 | (flags & 0xff);
     m_registers->transfer_mode_and_command = cmd.raw;
-    meowln("issued {:hex-dump}", cmd.raw);
+    // meowln("issued {:hex-dump}", cmd.raw);
 
     return {};
 }
@@ -421,21 +486,19 @@ ErrorOr<SDHostController::Response> SDHostController::wait_for_response_mmc()
 
     // 1. Wait for the Command Complete Interrupt. If the Command Complete
     // Interrupt has occurred, go to step (2).
-    meowln("res0: {}", (u32)m_registers->response_0);
-    meowln("res1: {}", (u32)m_registers->response_1);
-    meowln("res2: {}", (u32)m_registers->response_2);
-    meowln("res3: {}", (u32)m_registers->response_3);
+    // meowln("cmd: {:hex-dump}, 0: {:hex-dump}, 1: {:hex-dump}, 2: {:hex-dump}, 3: {:hex-dump}",  (u32)m_registers->transfer_mode_and_command, (u32)m_registers->response_0, (u32)m_registers->response_1, (u32)m_registers->response_2, (u32)m_registers->response_3);
     if (!retry_with_timeout(
             [&]() {
                 return m_registers->interrupt_status.command_complete;
             })) {
         meowln("res0: {}", (u32)m_registers->response_0);
-        meowln("EIO in wait_for_response_mmc");
+        meowln("EIO in wait_for_response_mmc {:hex-dump}", (u32)m_registers->interrupt_status.raw);
         return EIO;
     }
 
     // 2. Write 1 to Command Complete in the Normal Interrupt Status register to clear this bit
-    m_registers->interrupt_status.raw = command_complete;
+    // m_registers->interrupt_status.raw = command_complete;
+    m_registers->interrupt_status.command_complete = command_complete;
 
     // 3. Read the Response register(s) to get the response.
     // NOTE: We read fewer bits than ResponseType because the missing bits are only
@@ -482,17 +545,19 @@ ErrorOr<SDHostController::Response> SDHostController::wait_for_response_mmc()
 ErrorOr<SDHostController::Response> SDHostController::wait_for_response()
 {
     // SDHC 3.7.1.2 The Sequence to Finalize a Command
+    // meowln("cmd: {:hex-dump}, 0: {:hex-dump}, 1: {:hex-dump}, 2: {:hex-dump}, 3: {:hex-dump}", (u32)m_registers->transfer_mode_and_command, (u32)m_registers->response_0, (u32)m_registers->response_1, (u32)m_registers->response_2, (u32)m_registers->response_3);
 
     // 1. Wait for the Command Complete Interrupt. If the Command Complete
     // Interrupt has occurred, go to step (2).
     if (!retry_with_timeout(
             [&]() { return m_registers->interrupt_status.command_complete; })) {
-        dbgln("EIO in wait_for_response");
+        meowln("EIO in wait_for_response_mmc {:hex-dump}", (u32)m_registers->interrupt_status.raw);
         return EIO;
     }
 
     // 2. Write 1 to Command Complete in the Normal Interrupt Status register to clear this bit
-    m_registers->interrupt_status.raw = command_complete;
+    // m_registers->interrupt_status.raw = command_complete;
+    m_registers->interrupt_status.command_complete = command_complete;
 
     // 3. Read the Response register(s) to get the response.
     // NOTE: We read fewer bits than ResponseType because the missing bits are only
@@ -525,7 +590,7 @@ ErrorOr<SDHostController::Response> SDHostController::wait_for_response()
     // 7. Check for errors in Response Data. If there is no error, go to step (8). If there is an error, go to step (9).
     if (cmd.response_type != SD::ResponseType::ResponseOf136Bits) {
         if (card_status_contains_errors(cmd, r.response[0])) {
-            dbgln("EIO in wait_for_response 136bit");
+            meowln("EIO in wait_for_response 136bit");
             return EIO;
         }
     }
@@ -607,17 +672,17 @@ ErrorOr<u32> SDHostController::calculate_sd_clock_divisor(u32 sd_clock_frequency
 
 ErrorOr<void> SDHostController::sd_clock_supply(u32 frequency)
 {
-    meowln("sd_clock_supply: m_registers->host_configuration_0 == {:hex-dump}", (u32)m_registers->host_configuration_0);
-    meowln("sd_clock_supply: m_registers->host_configuration_1 == {:hex-dump}", (u32)m_registers->host_configuration_1);
+    // meowln("sd_clock_supply: m_registers->host_configuration_0 == {:hex-dump}", (u32)m_registers->host_configuration_0);
+    // meowln("sd_clock_supply: m_registers->host_configuration_1 == {:hex-dump}", (u32)m_registers->host_configuration_1);
     // SDHC 3.2.1: "SD Clock Supply Sequence"
     // The *Clock Control* register is in the lower 16 bits of *Host Configuration 1*
     VERIFY((m_registers->host_configuration_1 & sd_clock_enable) == 0);
 
     // 1. Find out the divisor to determine the SD Clock Frequency
     u32 const sd_clock_frequency = TRY(retrieve_sd_clock_frequency());
-    meowln("base clock: {}", sd_clock_frequency);
+    // meowln("base clock: {}", sd_clock_frequency);
     u32 divisor = TRY(calculate_sd_clock_divisor(sd_clock_frequency, frequency));
-    meowln("divisor: {}", divisor);
+    // meowln("divisor: {}", divisor);
     // 2. Set Internal Clock Enable and SDCLK Frequency Select in the Clock Control register
     u32 const eight_lower_bits_of_sdclk_frequency_select = (divisor & 0xff) << 8;
     u32 sdclk_frequency_select = eight_lower_bits_of_sdclk_frequency_select;
@@ -625,7 +690,7 @@ ErrorOr<void> SDHostController::sd_clock_supply(u32 frequency)
         u32 const two_upper_bits_of_sdclk_frequency_select = (divisor >> 8 & 0x3) << 6;
         sdclk_frequency_select |= two_upper_bits_of_sdclk_frequency_select;
     }
-    meowln("sd_clock_supply: wrote {:hex-dump}", (u32)((m_registers->host_configuration_1 & ~sd_clock_divisor_mask) | internal_clock_enable | sdclk_frequency_select));
+    // meowln("sd_clock_supply: wrote {:hex-dump}", (u32)((m_registers->host_configuration_1 & ~sd_clock_divisor_mask) | internal_clock_enable | sdclk_frequency_select));
     m_registers->host_configuration_1 = (m_registers->host_configuration_1 & ~sd_clock_divisor_mask) | internal_clock_enable | sdclk_frequency_select;
 
     // 3. Check Internal Clock Stable in the Clock Control register until it is 1
@@ -635,15 +700,15 @@ ErrorOr<void> SDHostController::sd_clock_supply(u32 frequency)
 
     // FIXME: With the default timeout value, reading will sometimes fail on the Raspberry Pi.
     //        We should be a bit smarter with choosing the right timeout value and handling errors.
-    meowln("sd_clock_supply: wrote {:hex-dump}", (u32)((m_registers->host_configuration_1 & ~data_timeout_counter_value_mask) | data_timeout_counter_value_max));
+    // meowln("sd_clock_supply: wrote {:hex-dump}", (u32)((m_registers->host_configuration_1 & ~data_timeout_counter_value_mask) | data_timeout_counter_value_max));
     m_registers->host_configuration_1 = (m_registers->host_configuration_1 & ~data_timeout_counter_value_mask) | data_timeout_counter_value_max;
 
     // 4. Set SD Clock Enable in the Clock Control register to 1
-    meowln("sd_clock_supply: wrote {:hex-dump}", (u32)(m_registers->host_configuration_1 | sd_clock_enable));
+    // meowln("sd_clock_supply: wrote {:hex-dump}", (u32)(m_registers->host_configuration_1 | sd_clock_enable));
     m_registers->host_configuration_1 = m_registers->host_configuration_1 | sd_clock_enable;
 
-    meowln("sd_clock_supply: m_registers->host_configuration_0 == {:hex-dump}", (u32)m_registers->host_configuration_0);
-    meowln("sd_clock_supply: m_registers->host_configuration_1 == {:hex-dump}", (u32)m_registers->host_configuration_1);
+    // meowln("sd_clock_supply: m_registers->host_configuration_0 == {:hex-dump}", (u32)m_registers->host_configuration_0);
+    // meowln("sd_clock_supply: m_registers->host_configuration_1 == {:hex-dump}", (u32)m_registers->host_configuration_1);
 
     return {};
 }
@@ -938,7 +1003,7 @@ ErrorOr<void> SDHostController::transfer_blocks_adma2(u32 block_address, u32 blo
         card_offset += blocks_transferred * block_len;
 
         // (2) Set the Descriptor address for ADMA in the ADMA System Address register.
-        m_registers->adma_system_address[0] = static_cast<u32>(adma_descriptor_physical & 0xFFFF'FFFF);
+        m_registers->adma_system_address[0] = static_cast<u32>(adma_descriptor_physical & 0xFFFFFFFF);
         if (m_mode == ADMA2_64)
             m_registers->adma_system_address[1] = static_cast<u32>(adma_descriptor_physical >> 32);
 
