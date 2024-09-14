@@ -11,6 +11,7 @@
 #include <AK/Result.h>
 #include <AK/Types.h>
 #include <Kernel/Devices/Storage/SD/Commands.h>
+#include <Kernel/Devices/Storage/SD/CommandsMMC.h>
 #include <Kernel/Devices/Storage/SD/Registers.h>
 #include <Kernel/Devices/Storage/SD/SDMemoryCard.h>
 #include <Kernel/Locking/Mutex.h>
@@ -54,6 +55,12 @@ private:
         command.raw = m_registers->transfer_mode_and_command;
         return command;
     }
+    MMC::Command last_sent_command_mmc()
+    {
+        MMC::Command command {};
+        command.raw = m_registers->transfer_mode_and_command;
+        return command;
+    }
     bool currently_active_command_uses_transfer_complete_interrupt();
 
     ErrorOr<u32> calculate_sd_clock_divisor(u32 sd_clock_frequency, u32 frequency);
@@ -67,9 +74,12 @@ private:
         u32 response[4];
     };
     ErrorOr<void> issue_command(SD::Command const&, u32 argument);
+    ErrorOr<void> issue_command_mmc(MMC::Command const&, u32 argument);
     ErrorOr<Response> wait_for_response();
+    ErrorOr<Response> wait_for_response_mmc();
 
     bool card_status_contains_errors(SD::Command const&, u32);
+    bool card_status_contains_errors_mmc(MMC::Command const&, u32);
 
     bool retry_with_timeout(Function<bool()>, i64 delay_between_tries = 100);
 
