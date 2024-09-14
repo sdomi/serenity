@@ -36,4 +36,23 @@ ErrorOr<FlatPtr> Process::sys$dbgputstr(Userspace<char const*> characters, size_
     return string->length();
 }
 
+ErrorOr<FlatPtr> Process::sys$meowputstr(Userspace<char const*> characters, size_t size)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    if (size == 0)
+        return 0;
+
+    if (size <= 1024) {
+        char buffer[1024];
+        TRY(copy_from_user(buffer, characters, size));
+        meowputstr(buffer, size);
+        return size;
+    }
+
+    auto string = TRY(try_copy_kstring_from_user(characters, size));
+    meowputstr(string->view());
+    return string->length();
+}
+
+
 }

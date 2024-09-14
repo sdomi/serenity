@@ -14,7 +14,7 @@
 
 namespace Kernel {
 
-static constexpr u16 serial_com1_io_port = 0x3F8;
+static constexpr u16 serial_com1_io_port = 0x80;
 
 void bochs_debug_output(char ch)
 {
@@ -23,33 +23,37 @@ void bochs_debug_output(char ch)
 
 void debug_output(char ch)
 {
-    static bool serial_ready = false;
+    // static bool was_cr = false;
+    (void)ch;
+//     if (ch == '\n' && !was_cr) {
+//         IO::out8(serial_com1_io_port, '\r');        
+//         // for (int i=0; i<47768000; i++)
+//         for (int i=0; i<27768000; i++)
+//             asm volatile("nop");
+//     }
+// 
+//     IO::out8(serial_com1_io_port, ch);
+// 
+//     // for (int i=0; i<47768000; i++)
+//     for (int i=0; i<27768000; i++)
+//         asm volatile("nop");
+// 
+//     was_cr = ch == '\r';
+}
+
+void debug_output_cool(char ch)
+{
     static bool was_cr = false;
-
-    if (!serial_ready) {
-        IO::out8(serial_com1_io_port + 1, 0x00);
-        IO::out8(serial_com1_io_port + 3, 0x80);
-        IO::out8(serial_com1_io_port + 0, 0x02);
-        IO::out8(serial_com1_io_port + 1, 0x00);
-        IO::out8(serial_com1_io_port + 3, 0x03);
-        IO::out8(serial_com1_io_port + 2, 0xC7);
-        IO::out8(serial_com1_io_port + 4, 0x0B);
-
-        serial_ready = true;
-    }
-
-    while ((IO::in8(serial_com1_io_port + 5) & 0x20) == 0) {
-#if !defined(PREKERNEL)
-        Processor::wait_check();
-#else
-        ;
-#endif
-    }
-
-    if (ch == '\n' && !was_cr)
+    if (ch == '\n' && !was_cr) {
         IO::out8(serial_com1_io_port, '\r');
+        for (int i=0; i<27768000; i++)
+            asm volatile("nop");
+    }
 
     IO::out8(serial_com1_io_port, ch);
+
+    for (int i=0; i<27768000; i++)
+        asm volatile("nop");
 
     was_cr = ch == '\r';
 }

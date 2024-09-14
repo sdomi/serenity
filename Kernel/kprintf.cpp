@@ -108,6 +108,21 @@ extern "C" void dbgputchar(char ch)
     internal_dbgputch(ch);
 }
 
+extern "C" void meowputstr(char const* characters, size_t length)
+{
+    if (!characters)
+        return;
+    SpinlockLocker lock(s_log_lock);
+    for (size_t i = 0; i < length; ++i)
+        debug_output_cool(characters[i]);
+}
+
+void meowputstr(StringView view)
+{
+    ::meowputstr(view.characters_without_null_termination(), view.length());
+}
+
+
 extern "C" void dbgputstr(char const* characters, size_t length)
 {
     if (!characters)

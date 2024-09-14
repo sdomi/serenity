@@ -84,6 +84,7 @@ int dprintf(int, char const* fmt, ...) __attribute__((format(printf, 2, 3)));
 int fprintf(FILE*, char const* fmt, ...) __attribute__((format(printf, 2, 3)));
 int printf(char const* fmt, ...) __attribute__((format(printf, 1, 2)));
 void dbgputstr(char const*, size_t);
+void meowputstr(char const*, size_t);
 int sprintf(char* buffer, char const* fmt, ...) __attribute__((format(printf, 2, 3)));
 int asprintf(char** strp, char const* fmt, ...) __attribute__((format(printf, 2, 3)));
 int snprintf(char* buffer, size_t, char const* fmt, ...) __attribute__((format(printf, 3, 4)));
