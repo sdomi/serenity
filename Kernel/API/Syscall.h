@@ -66,6 +66,7 @@ enum class NeedsBigProcessLock {
     S(copy_mount, NeedsBigProcessLock::No)                 \
     S(create_inode_watcher, NeedsBigProcessLock::No)       \
     S(create_thread, NeedsBigProcessLock::No)              \
+    S(meowputstr, NeedsBigProcessLock::No)                  \
     S(dbgputstr, NeedsBigProcessLock::No)                  \
     S(detach_thread, NeedsBigProcessLock::No)              \
     S(disown, NeedsBigProcessLock::No)                     \

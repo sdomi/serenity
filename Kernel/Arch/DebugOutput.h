@@ -9,5 +9,6 @@
 namespace Kernel {
 
 void debug_output(char ch);
+void debug_output_cool(char ch);
 
 }

@@ -356,6 +356,7 @@ public:
     ErrorOr<FlatPtr> sys$inode_watcher_add_watch(Userspace<Syscall::SC_inode_watcher_add_watch_params const*> user_params);
     ErrorOr<FlatPtr> sys$inode_watcher_remove_watch(int fd, int wd);
     ErrorOr<FlatPtr> sys$dbgputstr(Userspace<char const*>, size_t);
+    ErrorOr<FlatPtr> sys$meowputstr(Userspace<char const*>, size_t);
     ErrorOr<FlatPtr> sys$dump_backtrace();
     ErrorOr<FlatPtr> sys$gettid();
     ErrorOr<FlatPtr> sys$setsid();

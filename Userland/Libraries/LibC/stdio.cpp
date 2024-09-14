@@ -1163,6 +1163,11 @@ void dbgputstr(char const* characters, size_t length)
     syscall(SC_dbgputstr, characters, length);
 }
 
+void meowputstr(char const* characters, size_t length)
+{
+    syscall(SC_meowputstr, characters, length);
+}
+
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/tmpnam.html
 char* tmpnam(char*)
 {

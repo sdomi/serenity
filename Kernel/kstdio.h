@@ -11,6 +11,7 @@
 
 extern "C" {
 void dbgputstr(char const*, size_t);
+void meowputstr(char const*, size_t);
 void kernelputstr(char const*, size_t);
 void kernelcriticalputstr(char const*, size_t);
 void dbgputchar(char);
@@ -20,3 +21,4 @@ bool is_serial_debug_enabled();
 }
 
 void dbgputstr(StringView view);
+void meowputstr(StringView view);

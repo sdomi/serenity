@@ -24,9 +24,25 @@ void debug_write_string(StringView str)
     }
 }
 
+void meow_write_string(StringView str)
+{
+    if (str.is_null())
+        return;
+    for (u8 ch : str.bytes()) {
+        Kernel::debug_output_cool(ch);
+    }
+}
+
 extern "C" void dbgputstr(char const* characters, size_t length)
 {
     if (!characters)
         return;
     debug_write_string(StringView { characters, length });
+}
+
+extern "C" void meowputstr(char const* characters, size_t length)
+{
+    if (!characters)
+        return;
+    meow_write_string(StringView { characters, length });
 }

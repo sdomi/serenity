@@ -629,6 +629,7 @@ inline void warnln() { outln(stderr); }
 #endif
 
 void vdbg(StringView fmtstr, TypeErasedFormatParams&, bool newline = false);
+void meowdbg(StringView fmtstr, TypeErasedFormatParams&, bool newline = false);
 
 template<typename... Parameters>
 void dbg(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... parameters)
@@ -642,6 +643,13 @@ void dbgln(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... par
 {
     VariadicFormatParams<AllowDebugOnlyFormatters::Yes, Parameters...> variadic_format_params { parameters... };
     vdbg(fmtstr.view(), variadic_format_params, true);
+}
+
+template<typename... Parameters>
+void meowln(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... parameters)
+{
+    VariadicFormatParams<AllowDebugOnlyFormatters::Yes, Parameters...> variadic_format_params { parameters... };
+    meowdbg(fmtstr.view(), variadic_format_params, true);
 }
 
 inline void dbgln() { dbgln(""); }
@@ -772,6 +780,7 @@ using AK::warnln;
 
 using AK::dbg;
 using AK::dbgln;
+using AK::meowln;
 
 using AK::CheckedFormatString;
 using AK::FormatIfSupported;

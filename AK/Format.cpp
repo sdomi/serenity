@@ -1135,6 +1135,70 @@ void set_rich_debug_enabled(bool value)
     is_rich_debug_enabled = value;
 }
 
+void meowdbg(StringView fmtstr, TypeErasedFormatParams& params, bool newline)
+{
+    if (!is_debug_enabled)
+        return;
+
+    StringBuilder builder;
+
+    if (is_rich_debug_enabled) {
+#if defined(PREKERNEL)
+        ;
+#elif defined(KERNEL)
+        if (Kernel::Processor::is_initialized() && TimeManagement::is_initialized()) {
+            auto time = TimeManagement::the().monotonic_time(TimePrecision::Coarse);
+            if (Kernel::Thread::current()) {
+                auto& thread = *Kernel::Thread::current();
+                thread.process().name().with([&](auto& process_name) {
+                    builder.appendff("{}.{:03} \033[34;1m[#{} {}({}:{})]\033[0m: ", time.truncated_seconds(), time.nanoseconds_within_second() / 1000000, Kernel::Processor::current_id(), process_name.representable_view(), thread.pid().value(), thread.tid().value());
+                });
+            } else {
+                builder.appendff("{}.{:03} \033[34;1m[#{} Kernel]\033[0m: ", time.truncated_seconds(), time.nanoseconds_within_second() / 1000000, Kernel::Processor::current_id());
+            }
+        } else {
+            builder.appendff("\033[34;1m[Kernel]\033[0m: ");
+        }
+#elif !defined(AK_OS_WINDOWS)
+        auto process_name = process_name_for_logging();
+        if (!process_name.is_empty()) {
+            struct timespec ts = {};
+            clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+            auto pid = getpid();
+#    if defined(AK_OS_SERENITY) || defined(AK_OS_LINUX)
+            // Linux and Serenity handle thread IDs as if they are related to process ids
+            auto tid = gettid();
+            if (pid == tid)
+#    endif
+            {
+                builder.appendff("{}.{:03} \033[33;1m{}({})\033[0m: ", ts.tv_sec, ts.tv_nsec / 1000000, process_name, pid);
+            }
+#    if defined(AK_OS_SERENITY) || defined(AK_OS_LINUX)
+            else {
+                builder.appendff("{}.{:03} \033[33;1m{}({}:{})\033[0m: ", ts.tv_sec, ts.tv_nsec / 1000000, process_name, pid, tid);
+            }
+#    endif
+        }
+#endif
+    }
+
+    MUST(vformat(builder, fmtstr, params));
+    if (newline)
+        builder.append('\n');
+    auto const string = builder.string_view();
+
+#ifdef AK_OS_SERENITY
+#    if defined(KERNEL) && !defined(PREKERNEL)
+    if (!Kernel::Processor::is_initialized()) {
+        kernelearlyputstr(string.characters_without_null_termination(), string.length());
+        return;
+    }
+#    endif
+#endif
+    meowputstr(string.characters_without_null_termination(), string.length());
+}
+
+
 void vdbg(StringView fmtstr, TypeErasedFormatParams& params, bool newline)
 {
     if (!is_debug_enabled)
