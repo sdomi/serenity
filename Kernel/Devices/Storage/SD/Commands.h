@@ -33,6 +33,8 @@ enum class CommandIndex : u8 {
     AppSendOpCond = 41,
     AppSendScr = 51,
     AppCmd = 55,
+    
+    MMCSendExtCSD = 8,
 };
 
 enum class CommandType : u8 {
@@ -397,6 +399,27 @@ constexpr Command app_cmd = {
     .is_data = 0,
     .type = CommandType::Normal,
     .index = CommandIndex::AppCmd,
+    .reserved3 = 0
+};
+
+constexpr Command mmc_send_ext_csd = {
+    .dma_enable = 0,
+    .block_counter = 0,
+    .auto_command = SendAutoCommand::Disabled,
+    .direction = DataTransferDirection::CardToHost,
+    .multiblock = 0,
+    .response_type_r1r5 = 0,
+    .response_error_check = 0,
+    .response_interrupt_disable = 0,
+    .reserved1 = 0,
+    .response_type = ResponseType::ResponseOf48Bits,
+    .sub_command_flag = 0,
+    .crc_enable = 0,
+    .idx_enable = 0,
+    .is_data = 1,
+    .type = CommandType::Normal,
+    // .index = CommandIndex::MMCSendExtCSD,
+    .index = CommandIndex::SendIfCond,
     .reserved3 = 0
 };
 
