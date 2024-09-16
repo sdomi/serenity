@@ -225,6 +225,26 @@ constexpr Command select_card = {
     .reserved3 = 0
 };
 
+constexpr Command switch_ = {
+    .dma_enable = 0,
+    .block_counter = 0,
+    .auto_command = SendAutoCommand::Disabled,
+    .direction = DataTransferDirection::HostToCard,
+    .multiblock = 0,
+    .response_type_r1r5 = 0,
+    .response_error_check = 0,
+    .response_interrupt_disable = 0,
+    .reserved1 = 0,
+    .response_type = ResponseType::ResponseOf48BitsWithBusy,
+    .sub_command_flag = 0,
+    .crc_enable = 0,
+    .idx_enable = 0,
+    .is_data = 0,
+    .type = CommandType::Normal,
+    .index = CommandIndex::Switch,
+    .reserved3 = 0
+};
+
 }
 
 }

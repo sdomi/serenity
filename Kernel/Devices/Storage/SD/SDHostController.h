@@ -96,6 +96,7 @@ private:
     ErrorOr<void> transaction_control_with_data_transfer_using_the_dat_line_without_dma(SD::Command const&, u32 argument, u32 block_count, u32 block_size, UserOrKernelBuffer, DataTransferType data_transfer_type);
     ErrorOr<void> transfer_blocks_adma2(u32 block_address, u32 block_count, UserOrKernelBuffer, SD::DataTransferDirection);
     ErrorOr<SD::SDConfigurationRegister> retrieve_sd_configuration_register(u32 relative_card_address);
+    ErrorOr<SD::MMCExtendedCSD> retrieve_mmc_ext_csd(u32 relative_card_address);
 
     u32 make_adma_descriptor_table(u32 block_count);
 

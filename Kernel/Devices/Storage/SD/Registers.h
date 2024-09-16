@@ -353,4 +353,10 @@ union CardStatus {
 };
 static_assert(AssertSize<CardStatus, 4>());
 
+struct MMCExtendedCSD {
+    u8 meow[512];
+};
+
+static_assert(AssertSize<MMCExtendedCSD, 512>());
+
 }

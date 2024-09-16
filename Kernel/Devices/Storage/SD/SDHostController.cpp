@@ -152,7 +152,7 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
         meowln("there is no card. trying anyways.");
         // return ENODEV;
 
-    meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+    // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
 
     // PLSS 4.2: "Card Identification Mode"
     // "After power-on ...the cards are initialized with ... 400KHz clock frequency."
@@ -162,7 +162,7 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
         TRY(sd_clock_stop());
     TRY(sd_clock_supply(400000));
     meowln("set clock");
-    meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+    // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
 
     // PLSS 4.2.3: "Card Initialization and Identification Process"
     // Also see Figure 4-2 in the PLSS spec for a flowchart of the initialization process.
@@ -170,7 +170,7 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
 
     // 1. Send CMD0 (GO_IDLE_STATE) to the card
     TRY(issue_command(SD::Commands::go_idle_state, 0));
-    meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+    // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
     TRY(wait_for_response());
     meowln("{:hex-dump}", (u32)m_registers->interrupt_status.raw);
     // if (auto cmd0_response = wait_for_response();
@@ -181,18 +181,20 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
 
         // 7.1, OCR register
         meowln("cmd0 done, trying cmd1 ({:hex-dump})", (u32)m_registers->interrupt_status.raw);
-        TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0xC0FF8080));
+        u32 csr = 0xC0FF8080;
+        // u32 csr = 0x80FF8080;
+        TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
         meowln("delay");
         auto aaaa = wait_for_response_mmc();
         while (true) {
             if (aaaa.is_error()) {  
                 meowln("got error on mmc cmd1!");
-                meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
+                // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
                 return EIO;
             }
-            if (aaaa.value().response[0] != 0x40ff8080)
+            if ((aaaa.value().response[0] >> 31) == 1)
                 break;
-            TRY(issue_command_mmc(MMC::Commands::send_op_cond, 0xC0FF8080));
+            TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
             aaaa = wait_for_response_mmc();
         }
         meowln("finished cmd1: {}", (u32)aaaa.value().response[0]);
@@ -336,12 +338,10 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
     TRY(issue_command(SD::Commands::send_csd, rca));
     auto send_csd_response = TRY(wait_for_response());
     auto csd = bit_cast<SD::CardSpecificDataRegister>(send_csd_response.response);
-
-    u32 block_count = (csd.device_size + 1) * (1 << (csd.device_size_multiplier + 2));
-    u32 block_size = (1 << csd.max_read_data_block_length);
-    u64 capacity = static_cast<u64>(block_count) * block_size;
-    u64 card_capacity_in_blocks = capacity / block_len;
-
+    // meowln("oof: {:hex-dump}", send_csd_response.response[0]);
+    // meowln("oof: {:hex-dump}", send_csd_response.response[1]);
+    // meowln("oof: {:hex-dump}", send_csd_response.response[2]);
+    // meowln("oof: {:hex-dump}", send_csd_response.response[3]);
     if (!card_is_mmc) {
         if (m_registers->capabilities.high_speed) {
             dbgln("SDHC: Enabling High Speed mode");
@@ -355,6 +355,11 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
     TRY(issue_command(SD::Commands::select_card, rca));
     TRY(wait_for_response());
 
+    if (card_is_mmc) {
+        TRY(issue_command_mmc(MMC::Commands::switch_, (0b11 << 24) | (183 << 16) | (2 << 8))); // write, byte 183 (bus width), 2 (8-bit mode)
+        TRY(wait_for_response());
+    }
+
     // Set block length to 512 if the card is SDSC.
     // All other models only support 512 byte blocks so they don't need to be explicitly told
     if (!card_is_mmc) {
@@ -362,7 +367,33 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
             TRY(issue_command(SD::Commands::set_block_len, block_len));
             TRY(wait_for_response());
         }
+    } else {
+        TRY(issue_command(SD::Commands::set_block_len, block_len));
+        TRY(wait_for_response());
     }
+
+    if (card_is_mmc && csd.device_size == 0xfff) {
+        SD::MMCExtendedCSD ext_csd = TRY(retrieve_mmc_ext_csd(rca));
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[0]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[1]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[2]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[3]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[4]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[5]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[6]);
+        meowln("ecsd: {:hex-dump}", ext_csd.meow[7]);
+    }
+    // } else {
+    u32 block_count = (csd.device_size + 1) * (1 << (csd.device_size_multiplier + 2));
+    u32 block_size = (1 << csd.max_read_data_block_length);
+    u64 capacity = static_cast<u64>(block_count) * block_size;
+    u64 card_capacity_in_blocks = capacity / block_len;
+    // }
+
+    meowln("dev_size: {}, mul: {}", csd.device_size, csd.device_size_multiplier);
+    meowln("max_r: {}", csd.max_read_data_block_length);
+    meowln("cap: {}, blocks: {}", static_cast<u64>(block_count) * block_size, capacity / block_len);
+
 
     SD::SDConfigurationRegister scr;
     if (!card_is_mmc) {
@@ -588,7 +619,13 @@ ErrorOr<SDHostController::Response> SDHostController::wait_for_response()
         r.response[0] = m_registers->response_0;
         break;
     case SD::ResponseType::ResponseOf48BitsWithBusy:
-        // FIXME: Idk what to do here
+        r.response[0] = m_registers->response_0;
+        if (!retry_with_timeout(
+                [&]() { return ~m_registers->present_state.dat_line_active; })) {// is this the correct one?
+            meowln("EIO in R1b: the busy did not go away :c");
+            return EIO;
+        }
+        // TODO: send CMD_STATUS. for now we'll just wait for the busy to go away
         break;
     }
 
@@ -752,8 +789,8 @@ ErrorOr<void> SDHostController::sd_clock_frequency_change(u32 new_frequency)
 
 ErrorOr<void> SDHostController::reset_host_controller()
 {
-    meowln("host_config_0 pre reset: {}", (u32)m_registers->host_configuration_0);
-    meowln("host_config_1 pre reset: {}", (u32)m_registers->host_configuration_1);
+    // meowln("host_config_0 pre reset: {}", (u32)m_registers->host_configuration_0);
+    // meowln("host_config_1 pre reset: {}", (u32)m_registers->host_configuration_1);
     m_registers->host_configuration_0 = 0;
     m_registers->host_configuration_1 = m_registers->host_configuration_1 | software_reset_for_all;
     if (!retry_with_timeout(
@@ -835,6 +872,7 @@ ErrorOr<void> SDHostController::transaction_control_with_data_transfer_using_the
         for (u32 i = 0; i < block_count; i++) {
             // 14. Then wait for the Buffer Read Ready Interrupt.
             if (!retry_with_timeout([&]() { return m_registers->interrupt_status.buffer_read_ready; })) {
+                meowln("not like this ;-;");
                 return EIO;
             }
 
@@ -851,6 +889,9 @@ ErrorOr<void> SDHostController::transaction_control_with_data_transfer_using_the
             }
 
             // 17. Repeat until all blocks are received and then go to step (18).
+            u8 asdf[33];
+            TRY(buf.read(&asdf, i*block_size, 32));
+            meowln("{}, {}, {:hex-dump}", (u8)command.index, argument, asdf);
         }
     }
 
@@ -944,7 +985,7 @@ u32 SDHostController::make_adma_descriptor_table(u32 block_count)
                     .action = SD::DMAAction::Tran,
                     .length_upper = 0,
                     .length_lower = static_cast<u32>(blocks_to_read * block_len),
-                    .address_low = static_cast<u32>((physical_transfer_address + offset) & 0xFFFF'FFFF),
+                    .address_low = static_cast<u32>((physical_transfer_address + offset) & 0xFFFFFFFF),
                     .address_high = static_cast<u32>((physical_transfer_address + offset) >> 32),
                 };
                 blocks_transferred += blocks_to_read;
@@ -959,7 +1000,7 @@ u32 SDHostController::make_adma_descriptor_table(u32 block_count)
                 .action = SD::DMAAction::Tran,
                 .length_upper = 0,
                 .length_lower = 0, // length of 0 means 1<<16 bytes
-                .address_low = static_cast<u32>((physical_transfer_address + offset) & 0xFFFF'FFFF),
+                .address_low = static_cast<u32>((physical_transfer_address + offset) & 0xFFFFFFFF),
                 .address_high = static_cast<u32>((physical_transfer_address + offset) >> 32),
             };
 
@@ -1187,10 +1228,23 @@ ErrorOr<SD::SDConfigurationRegister> SDHostController::retrieve_sd_configuration
     TRY(wait_for_response());
     TRY(transaction_control_with_data_transfer_using_the_dat_line_without_dma(
         SD::Commands::app_send_scr,
-        0, 1, 8,
+        0, 1, sizeof(SD::SDConfigurationRegister),
         UserOrKernelBuffer::for_kernel_buffer(scr.raw), DataTransferType::Read));
 
     return scr;
+}
+
+ErrorOr<SD::MMCExtendedCSD> SDHostController::retrieve_mmc_ext_csd(u32 relative_card_address)
+{
+    // TODO: linux's drivers/mmc/core/mmc_ops.c has an ominous `mmc_can_ext_csd`. it may be a good idea to check for that.
+    SD::MMCExtendedCSD ext_csd;
+    (void)relative_card_address; // TODO: are we sure this card is always selected?
+    TRY(transaction_control_with_data_transfer_using_the_dat_line_without_dma(
+        SD::Commands::mmc_send_ext_csd,
+        0, 1, 512,
+        UserOrKernelBuffer::for_kernel_buffer(bit_cast<u8*>(&ext_csd)), DataTransferType::Read));
+
+    return ext_csd;
 }
 
 ErrorOr<u32> SDHostController::retrieve_sd_clock_frequency()
