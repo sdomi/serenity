@@ -137,7 +137,7 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
 {
     bool card_is_mmc = false;
     SD::OperatingConditionRegister ocr = {};
-    meowln("CARD INIT");
+    // meowln("CARD INIT");
     if (!is_card_inserted())
         meowln("there is no card. trying anyways.");
         // return ENODEV;
@@ -151,7 +151,7 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
     if (is_sd_clock_enabled())
         TRY(sd_clock_stop());
     TRY(sd_clock_supply(400000));
-    meowln("set clock");
+    // meowln("set clock");
     // meowln("try_initialize_inserted_card: m_registers->present_state == {:hex-dump}", (u32)m_registers->present_state.raw);
 
     // PLSS 4.2.3: "Card Initialization and Identification Process"
@@ -170,11 +170,11 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
     	card_is_mmc = true;
 
         // 7.1, OCR register
-        meowln("cmd0 done, trying cmd1 ({:hex-dump})", (u32)m_registers->interrupt_status.raw);
+        // meowln("cmd0 done, trying cmd1 ({:hex-dump})", (u32)m_registers->interrupt_status.raw);
         u32 csr = 0xC0FF8080;
         // u32 csr = 0x80FF8080;
         TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
-        meowln("delay");
+        // meowln("delay");
         auto aaaa = wait_for_response_mmc();
         while (true) {
             if (aaaa.is_error()) {  
@@ -187,7 +187,7 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
             TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
             aaaa = wait_for_response_mmc();
         }
-        meowln("finished cmd1: {}", (u32)aaaa.value().response[0]);
+        // meowln("finished cmd1: {}", (u32)aaaa.value().response[0]);
  //else {
         //     meowln("pain {:hex-dump}", aaaa.value().response[0]);
         // }
@@ -328,10 +328,7 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
     TRY(issue_command(SD::Commands::send_csd, rca));
     auto send_csd_response = TRY(wait_for_response());
     auto csd = bit_cast<SD::CardSpecificDataRegister>(send_csd_response.response);
-    // meowln("oof: {:hex-dump}", send_csd_response.response[0]);
-    // meowln("oof: {:hex-dump}", send_csd_response.response[1]);
-    // meowln("oof: {:hex-dump}", send_csd_response.response[2]);
-    // meowln("oof: {:hex-dump}", send_csd_response.response[3]);
+    
     if (!card_is_mmc) {
         if (m_registers->capabilities.high_speed) {
             dbgln("SDHC: Enabling High Speed mode");
@@ -362,23 +359,26 @@ ErrorOr<NonnullLockRefPtr<SDMemoryCard>> SDHostController::try_initialize_insert
         TRY(wait_for_response());
     }
 
+    u32 block_count;
+    u32 block_size;
+
     if (card_is_mmc && csd.device_size == 0xfff) {
         SD::MMCExtendedCSD ext_csd = TRY(retrieve_mmc_ext_csd(rca));
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[0]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[1]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[2]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[3]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[4]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[5]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[6]);
-        meowln("ecsd: {:hex-dump}", ext_csd.meow[7]);
+        meowln("ecsd: {:hex-dump}", ext_csd.sec_count);
+
+        // FIXME: support for sectors bigger than 512
+        VERIFY(ext_csd.data_sector_size == 0);
+        VERIFY(ext_csd.use_native_sector == 0);
+
+        block_count = ext_csd.sec_count;
+        block_size = 512;
+    } else {
+        block_count = (csd.device_size + 1) * (1 << (csd.device_size_multiplier + 2));
+        block_size = (1 << csd.max_read_data_block_length);
     }
-    // } else {
-    u32 block_count = (csd.device_size + 1) * (1 << (csd.device_size_multiplier + 2));
-    u32 block_size = (1 << csd.max_read_data_block_length);
+
     u64 capacity = static_cast<u64>(block_count) * block_size;
     u64 card_capacity_in_blocks = capacity / block_len;
-    // }
 
     meowln("dev_size: {}, mul: {}", csd.device_size, csd.device_size_multiplier);
     meowln("max_r: {}", csd.max_read_data_block_length);
@@ -801,6 +801,12 @@ ErrorOr<void> SDHostController::transaction_control_with_data_transfer_using_the
     UserOrKernelBuffer buf,
     DataTransferType data_transfer_type)
 {
+
+    if (command.index == SD::CommandIndex::ReadMultipleBlock) { // TODO: writes
+        VERIFY(block_size == block_len); // TODO: different block sizes for multiple reads...
+        TRY(issue_command(SD::Commands::set_block_count, (1 << 30) | block_count));
+        TRY(wait_for_response());
+    }
     // SDHC 3.7.2: "Transaction Control with Data Transfer Using DAT Line (without DMA)"
 
     // 1. Set the value corresponding to the executed data byte length of one block to Block Size register.
@@ -879,9 +885,9 @@ ErrorOr<void> SDHostController::transaction_control_with_data_transfer_using_the
             }
 
             // 17. Repeat until all blocks are received and then go to step (18).
-            u8 asdf[33];
-            TRY(buf.read(&asdf, i*block_size, 32));
-            meowln("{}, {}, {:hex-dump}", (u8)command.index, argument, asdf);
+            // u8 asdf[33];
+            // TRY(buf.read(&asdf, 32));
+            // critical_dmesgln("{}, {}, {:hex-dump}", (u8)command.index, argument, asdf);
         }
     }
 
