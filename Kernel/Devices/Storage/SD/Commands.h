@@ -28,6 +28,7 @@ enum class CommandIndex : u8 {
     SetBlockLen = 16,
     ReadSingleBlock = 17,
     ReadMultipleBlock = 18,
+    SetBlockCount = 23,
     WriteSingleBlock = 24,
     WriteMultipleBlock = 25,
     AppSendOpCond = 41,
@@ -285,7 +286,7 @@ constexpr Command read_single_block = {
 constexpr Command read_multiple_block = {
     .dma_enable = 0,
     .block_counter = 1,
-    .auto_command = SendAutoCommand::Command12,
+    .auto_command = SendAutoCommand::Disabled,
     .direction = DataTransferDirection::CardToHost,
     .multiblock = 1,
     .response_type_r1r5 = 0,
@@ -422,6 +423,27 @@ constexpr Command mmc_send_ext_csd = {
     .index = CommandIndex::SendIfCond,
     .reserved3 = 0
 };
+
+constexpr Command set_block_count = {
+    .dma_enable = 0,
+    .block_counter = 0,
+    .auto_command = SendAutoCommand::Disabled,
+    .direction = DataTransferDirection::HostToCard,
+    .multiblock = 0,
+    .response_type_r1r5 = 0,
+    .response_error_check = 0,
+    .response_interrupt_disable = 0,
+    .reserved1 = 0,
+    .response_type = ResponseType::ResponseOf48Bits,
+    .sub_command_flag = 0,
+    .crc_enable = 0,
+    .idx_enable = 0,
+    .is_data = 0,
+    .type = CommandType::Normal,
+    .index = CommandIndex::SetBlockCount,
+    .reserved3 = 0
+};
+
 
 }
 
