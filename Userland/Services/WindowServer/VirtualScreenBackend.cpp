@@ -40,9 +40,14 @@ ErrorOr<void> VirtualScreenBackend::set_head_mode_setting(GraphicsHeadModeSettin
 {
     m_height = mode_setting.vertical_active;
 
-    if (mode_setting.horizontal_stride == 0)
-        mode_setting.horizontal_stride = static_cast<int>(mode_setting.horizontal_active * sizeof(Gfx::ARGB32));
-    m_pitch = mode_setting.horizontal_stride;
+    if (mode_setting.horizontal_stride == 0) {
+        if (m_pitch == 0) {
+            mode_setting.horizontal_stride = static_cast<int>(mode_setting.horizontal_active * sizeof(Gfx::ARGB32));
+            m_pitch = mode_setting.horizontal_stride;
+        } else {
+            mode_setting.horizontal_stride = m_pitch;
+        }
+    }
     if (static_cast<int>(mode_setting.horizontal_active * sizeof(Gfx::ARGB32)) != mode_setting.horizontal_stride)
         return Error::from_string_literal("Unsupported pitch");
 

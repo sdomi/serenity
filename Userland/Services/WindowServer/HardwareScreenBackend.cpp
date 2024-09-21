@@ -135,6 +135,7 @@ ErrorOr<GraphicsHeadModeSetting> HardwareScreenBackend::get_head_mode_setting()
     memset(&mode_setting, 0, sizeof(GraphicsHeadModeSetting));
     int rc = graphics_connector_get_head_mode_setting(m_display_connector_fd, &mode_setting);
     if (rc != 0) {
+        meowln("error in get_head_mode_setting");
         return Error::from_syscall("graphics_connector_get_head_mode_setting"sv, rc);
     }
     m_pitch = mode_setting.horizontal_stride;

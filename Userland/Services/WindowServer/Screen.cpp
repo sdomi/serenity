@@ -214,6 +214,7 @@ Screen::Screen(size_t screen_index)
     , m_compositor_screen_data(Compositor::create_screen_data({}))
 {
     update_virtual_and_physical_rects();
+    meowln("initial open");
     open_device();
 }
 
@@ -320,12 +321,14 @@ bool Screen::set_resolution(bool initial)
         screen_with_cursor = &ScreenInput::the().cursor_location_screen();
 
     auto& info = screen_layout_info();
+    meowln("set_resolution");
 
     ErrorOr<void> return_value = Error::from_errno(EINVAL);
     {
         GraphicsHeadModeSetting requested_mode_setting;
         memset(&requested_mode_setting, 0, sizeof(GraphicsHeadModeSetting));
         requested_mode_setting.horizontal_stride = info.resolution.width() * 4;
+        // requested_mode_setting.horizontal_stride = 5504;
         requested_mode_setting.pixel_clock_in_khz = 0;
         requested_mode_setting.horizontal_active = info.resolution.width();
         requested_mode_setting.horizontal_front_porch_pixels = 0;
@@ -343,6 +346,7 @@ bool Screen::set_resolution(bool initial)
     dbgln_if(WSSCREEN_DEBUG, "Screen #{}: fb_set_resolution() - success", index());
 
     auto on_change_resolution = [&]() -> ErrorOr<void> {
+        meowln("on_change_resolution");
         if (initial) {
             TRY(m_backend->unmap_framebuffer());
             TRY(m_backend->map_framebuffer());

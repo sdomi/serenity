@@ -83,6 +83,7 @@ ErrorOr<int> serenity_main(Main::Arguments)
 
         auto add_unconfigured_display_connector_devices = [&]() -> ErrorOr<void> {
             // Enumerate the /dev/gpu/connectorX devices and try to set up any ones we find that we haven't already used
+            meowln("loop");
             Core::DirIterator di("/dev/gpu", Core::DirIterator::SkipParentAndBaseDir);
             while (di.has_next()) {
                 auto path = di.next_path();
@@ -109,11 +110,11 @@ ErrorOr<int> serenity_main(Main::Arguments)
 
             TRY(add_unconfigured_display_connector_devices());
             if (!WindowServer::Screen::apply_layout(move(screen_layout), error_msg)) {
-                dbgln("Failed to apply generated fallback screen layout: {}", error_msg);
+                meowln("Failed to apply generated fallback screen layout: {}", error_msg);
                 return false;
             }
 
-            dbgln("Applied generated fallback screen layout!");
+            meowln("Applied generated fallback screen layout!");
             return true;
         };
 
@@ -125,11 +126,11 @@ ErrorOr<int> serenity_main(Main::Arguments)
             TRY(add_unconfigured_display_connector_devices());
 
             if (!WindowServer::Screen::apply_layout(move(screen_layout), error_msg)) {
-                dbgln("Error applying screen layout: {}", error_msg);
+                meowln("Error applying screen layout: {}", error_msg);
                 TRY(apply_and_generate_generic_screen_layout());
             }
         } else {
-            dbgln("Error loading screen configuration: {}", error_msg);
+            meowln("Error loading screen configuration: {}", error_msg);
             TRY(apply_and_generate_generic_screen_layout());
         }
     }
