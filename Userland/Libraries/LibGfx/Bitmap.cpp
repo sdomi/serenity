@@ -64,9 +64,9 @@ static bool size_would_overflow(BitmapFormat format, IntSize size, int scale_fac
     return Checked<size_t>::multiplication_would_overflow(pitch, size.height() * scale_factor);
 }
 
-ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create(BitmapFormat format, IntSize size, int scale_factor)
+ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create(BitmapFormat format, IntSize size, int scale_factor, size_t pitch)
 {
-    auto backing_store = TRY(Bitmap::allocate_backing_store(format, size, scale_factor));
+    auto backing_store = TRY(Bitmap::allocate_backing_store(format, size, scale_factor, pitch));
     return AK::adopt_nonnull_ref_or_enomem(new (nothrow) Bitmap(format, size, scale_factor, backing_store));
 }
 
@@ -101,6 +101,7 @@ Bitmap::Bitmap(BitmapFormat format, IntSize size, int scale_factor, BackingStore
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create_wrapper(BitmapFormat format, IntSize size, int scale_factor, size_t pitch, void* data, Function<void()>&& destruction_callback)
 {
+    meowln("wrapper: {}", pitch);
     if (size_would_overflow(format, size, scale_factor))
         return Error::from_string_literal("Gfx::Bitmap::create_wrapper size overflow");
     return adopt_ref(*new Bitmap(format, size, scale_factor, pitch, data, move(destruction_callback)));
@@ -169,6 +170,7 @@ Bitmap::Bitmap(BitmapFormat format, IntSize size, int scale_factor, size_t pitch
 {
     VERIFY(pitch >= minimum_pitch(size.width() * scale_factor, format));
     VERIFY(!size_would_overflow(format, size, scale_factor));
+    meowln("ACTUAL pitch: {}", m_pitch);
     // FIXME: assert that `data` is actually long enough!
 }
 
@@ -583,7 +585,7 @@ Gfx::ShareableBitmap Bitmap::to_shareable_bitmap() const
     return Gfx::ShareableBitmap { bitmap_or_error.release_value_but_fixme_should_propagate_errors(), Gfx::ShareableBitmap::ConstructWithKnownGoodBitmap };
 }
 
-ErrorOr<BackingStore> Bitmap::allocate_backing_store(BitmapFormat format, IntSize size, int scale_factor)
+ErrorOr<BackingStore> Bitmap::allocate_backing_store(BitmapFormat format, IntSize size, int scale_factor, size_t pitch)
 {
     if (size.is_empty())
         return Error::from_string_literal("Gfx::Bitmap backing store size is empty");
@@ -591,7 +593,8 @@ ErrorOr<BackingStore> Bitmap::allocate_backing_store(BitmapFormat format, IntSiz
     if (size_would_overflow(format, size, scale_factor))
         return Error::from_string_literal("Gfx::Bitmap backing store size overflow");
 
-    auto const pitch = minimum_pitch(size.width() * scale_factor, format);
+    if (pitch == 0)
+        pitch = minimum_pitch(size.width() * scale_factor, format);
     auto const data_size_in_bytes = size_in_bytes(pitch, size.height() * scale_factor);
 
     void* data = kcalloc(1, data_size_in_bytes);
