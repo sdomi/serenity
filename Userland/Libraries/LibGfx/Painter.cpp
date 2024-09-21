@@ -1075,7 +1075,6 @@ void Painter::blit(IntPoint position, Gfx::Bitmap const& source, IntRect const& 
     int const first_column = clipped_rect.left() - dst_rect.left();
     ARGB32* dst = m_target->scanline(clipped_rect.y()) + clipped_rect.x();
     size_t const dst_skip = m_target->pitch() / sizeof(ARGB32);
-    meowln("blit: {}", m_target->pitch());
 
     if (source.format() == BitmapFormat::BGRx8888 || source.format() == BitmapFormat::BGRA8888) {
         ARGB32 const* src = source.scanline(src_rect.top() + first_row) + src_rect.left() + first_column;

@@ -101,7 +101,6 @@ Bitmap::Bitmap(BitmapFormat format, IntSize size, int scale_factor, BackingStore
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create_wrapper(BitmapFormat format, IntSize size, int scale_factor, size_t pitch, void* data, Function<void()>&& destruction_callback)
 {
-    meowln("wrapper: {}", pitch);
     if (size_would_overflow(format, size, scale_factor))
         return Error::from_string_literal("Gfx::Bitmap::create_wrapper size overflow");
     return adopt_ref(*new Bitmap(format, size, scale_factor, pitch, data, move(destruction_callback)));
@@ -170,7 +169,6 @@ Bitmap::Bitmap(BitmapFormat format, IntSize size, int scale_factor, size_t pitch
 {
     VERIFY(pitch >= minimum_pitch(size.width() * scale_factor, format));
     VERIFY(!size_would_overflow(format, size, scale_factor));
-    meowln("ACTUAL pitch: {}", m_pitch);
     // FIXME: assert that `data` is actually long enough!
 }
 
