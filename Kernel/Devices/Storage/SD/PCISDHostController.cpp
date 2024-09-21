@@ -34,7 +34,7 @@ PCISDHostController::PCISDHostController(PCI::DeviceIdentifier const& device_ide
     }
 
     m_registers = PCI::map_bar<SD::HostControlRegisterMap volatile>(device_identifier, static_cast<PCI::HeaderType0BaseRegister>(slot_information_register.first_bar_number)).release_value_but_fixme_should_propagate_errors();
-    m_registers = PCI::map_bar<SD::HostControlRegisterMap volatile>(device_identifier, static_cast<PCI::HeaderType0BaseRegister>(slot_information_register.first_bar_number)).release_value_but_fixme_should_propagate_errors();
+    // m_registers = PCI::map_bar<SD::HostControlRegisterMap volatile>(device_identifier, static_cast<PCI::HeaderType0BaseRegister>(slot_information_register.first_bar_number)).release_value_but_fixme_should_propagate_errors();
     // auto physical_address_of_sdhc_registers = PhysicalAddress {
     //     PCI::get_BAR(device_identifier, static_cast<PCI::HeaderType0BaseRegister>(slot_information_register.first_bar_number))
     // };
