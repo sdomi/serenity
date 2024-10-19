@@ -19,9 +19,10 @@
 namespace Kernel {
 
 // Relevant Specifications:
-// * (SDHC): SD Host Controller Simplified Specification (https://www.sdcard.org/downloads/pls/)
+// * (SDHC) SD Host Controller Simplified Specification (https://www.sdcard.org/downloads/pls/)
 // * (PLSS) Physical Layer Simplified Specification (https://www.sdcard.org/downloads/pls/)
 // * (BCM2835) BCM2835 ARM Peripherals (https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf)
+// * (eMMC) JESD84-B51 Embedded Multi-Media Card (e-MMC) Electrical Standard (5.1)
 
 static void delay(i64 nanoseconds)
 {
@@ -40,6 +41,12 @@ constexpr u32 data_transfer_width_4bit = 1 << 1;
 constexpr u32 high_speed_enable = 1 << 2;
 constexpr u32 dma_select_adma2_32 = 0b10 << 3;
 constexpr u32 dma_select_adma2_64 = 0b11 << 3;
+
+// 2.2.12 Power Control Register
+constexpr u32 sd_bus_power_enable = 1 << 8;
+constexpr u32 sd_bus_power_1_8v = 0b101 << 9;
+constexpr u32 sd_bus_power_3_0v = 0b110 << 9;
+constexpr u32 sd_bus_power_3_3v = 0b111 << 9;
 
 // In "m_registers->host_configuration_1"
 // In sub-register "Clock Control"
@@ -95,14 +102,12 @@ ErrorOr<void> SDHostController::initialize()
     if (!m_registers)
         return EIO;
 
-    // meowln("hc v{}", (u8)host_version());
-
     if (host_version() != SD::HostVersion::Version3 && host_version() != SD::HostVersion::Version2)
         return ENOTSUP;
 
     TRY(reset_host_controller());
 
-    m_registers->host_configuration_0 = 8391480; // TODO xD
+    m_registers->host_configuration_0 = m_registers->host_configuration_0 | sd_bus_power_enable | sd_bus_power_1_8v; // TODO
     m_registers->interrupt_status_enable = 0xffffffff;
 
     auto card_or_error = try_initialize_inserted_card();
@@ -126,6 +131,7 @@ void SDHostController::try_enable_dma()
             meowln("Allocated SDHC DMA buffer at {}", m_dma_region->physical_page(0)->paddr());
             // FIXME: This check does not seem to work, qemu supports 64 bit addressing, but we don't seem to detect it
             // FIXME: Hardcoding to use the 64 bit mode leads to transfer timeouts, without any errors reported from qemu
+            // TODO: check if the two above are resolved xD
             if (host_version() == SD::HostVersion::Version3 && m_registers->capabilities.dma_64_bit_addressing_v3) {
                 meowln("Setting SDHostController to operate using ADMA2 with 64 bit addressing");
                 m_mode = OperatingMode::ADMA2_64;
@@ -170,7 +176,6 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
     // SD interface condition: 7:0 = check pattern, 11:8 = supply voltage
     //      0x1aa: check pattern = 10101010, supply voltage = 1 => 2.7-3.6V
     u32 const voltage_window = 0x1aa;
-    meowln("cmd8");
     TRY(issue_command(SD::Commands::send_if_cond, voltage_window));
     auto interface_condition_response = wait_for_response();
 
@@ -179,7 +184,7 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
     // Memory Card)
 
     if (interface_condition_response.is_error()) {
-    	meowln("likely a MMC card.");
+    	dbgln("SDHC: Did not receive a response for CMD8, probing for MMC");
     	card_is_mmc = true;
 
         // TODO: clear the error register here instead
@@ -187,7 +192,8 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
         
         delay(1000); // wait 1ms, according to spec and linux impl
 
-        m_registers->host_configuration_0 = 8391480; // TODO xD
+        // m_registers->host_configuration_0 = 8391480; // TODO xD
+        m_registers->host_configuration_0 = m_registers->host_configuration_0 | sd_bus_power_enable | sd_bus_power_1_8v;
         m_registers->interrupt_status_enable = 0xffffffff;
 
         TRY(sd_clock_supply(400000));
@@ -199,7 +205,7 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
         u32 csr = 0xC0FF8080;
         TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
         auto aaaa = wait_for_response_mmc();
-        while (true) { // TODO make this a for
+        for (int i=0; i<8; i++) {
             if (aaaa.is_error())
                 return EIO;
             if ((aaaa.value().response[0] >> 31) == 1)
@@ -207,12 +213,12 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
             TRY(issue_command_mmc(MMC::Commands::send_op_cond, csr));
             aaaa = wait_for_response_mmc();
         }
+        if ((aaaa.value().response[0] >> 31) == 0)
+            return EIO;
         
         ocr.raw = aaaa.value().response[0];
 
     } else {
-        meowln("cmd8 done. likely SD");
-
         // 4. If the card responds to CMD8, but it's not a valid response then the
         // card is not usable
         if (interface_condition_response.value().response[0] != voltage_window) {
@@ -318,7 +324,6 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
 
     if (card_is_mmc && csd.device_size == 0xfff) {
         SD::MMCExtendedCSD ext_csd = TRY(retrieve_mmc_ext_csd(rca));
-        // meowln("ecsd: {:hex-dump}", ext_csd.sec_count);
 
         // FIXME: support for sectors bigger than 512
         VERIFY(ext_csd.data_sector_size == 0);
@@ -334,17 +339,11 @@ ErrorOr<NonnullRefPtr<SDMemoryCard>> SDHostController::try_initialize_inserted_c
     u64 capacity = static_cast<u64>(block_count) * block_size;
     u64 card_capacity_in_blocks = capacity / block_len;
 
-    // meowln("dev_size: {}, mul: {}", csd.device_size, csd.device_size_multiplier);
-    // meowln("max_r: {}", csd.max_read_data_block_length);
-    // meowln("cap: {}, blocks: {}", static_cast<u64>(block_count) * block_size, capacity / block_len);
-
 
     SD::SDConfigurationRegister scr;
     if (!card_is_mmc) {
         scr = TRY(retrieve_sd_configuration_register(rca));
-    }
 
-    if (!card_is_mmc) {
         // SDHC 3.4: "Changing Bus Width"
 
         // 1. Set Card Interrupt Status Enable in the Normal Interrupt Status Enable register to 0 for
@@ -733,8 +732,6 @@ ErrorOr<void> SDHostController::sd_clock_frequency_change(u32 new_frequency)
 
 ErrorOr<void> SDHostController::reset_host_controller()
 {
-    // meowln("host_config_0 pre reset: {}", (u32)m_registers->host_configuration_0);
-    // meowln("host_config_1 pre reset: {}", (u32)m_registers->host_configuration_1);
     m_registers->host_configuration_0 = 0;
     m_registers->host_configuration_1 = m_registers->host_configuration_1 | software_reset_for_all;
     if (!retry_with_timeout(

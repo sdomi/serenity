@@ -70,7 +70,7 @@ struct HostControlRegisterMap {
         };
         u32 raw;
     } present_state;
-    u32 host_configuration_0;
+    u32 host_configuration_0; // TODO: split those. they're arbitrary.
     u32 host_configuration_1;
     union InterruptStatus {
         struct { // SDHC 2.2.18 Normal Interrupt Status Register (Cat.C Offset 030h)
